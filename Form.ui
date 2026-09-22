@@ -30,7 +30,7 @@
    <item>
     <widget class="QLabel" name="hintLabel">
      <property name="text">
-      <string>Настройки варианта 1. Для дробных чисел используйте точку; допустима запись 1e-9.</string>
+      <string>Настройки варианта 1. Используйте стрелки или ввод числа; допуск 1e-10 вводится как 0.0000000001.</string>
      </property>
      <property name="wordWrap">
       <bool>true</bool>
@@ -125,24 +125,30 @@
               </widget>
              </item>
              <item row="1" column="1">
-              <widget class="QLineEdit" name="initialSnapNodes">
+              <widget class="QSpinBox" name="initialSnapNodes">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>16</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Начальное число Snap-узлов</string>
                </property>
                <property name="toolTip">
                 <string>Число ближайших узлов на грубом уровне; на финальном уровне используется один узел.</string>
+               </property>
+               <property name="minimum">
+                <number>0</number>
+               </property>
+               <property name="maximum">
+                <number>2147483647</number>
+               </property>
+               <property name="singleStep">
+                <number>1</number>
+               </property>
+               <property name="value">
+                <number>16</number>
                </property>
               </widget>
              </item>
@@ -157,24 +163,30 @@
               </widget>
              </item>
              <item row="2" column="1">
-              <widget class="QLineEdit" name="coarsestIntervals">
+              <widget class="QSpinBox" name="coarsestIntervals">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>8</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Интервалы грубой сетки</string>
                </property>
                <property name="toolTip">
                 <string>Желаемый верхний предел числа интервалов по каждой оси самого грубого уровня.</string>
+               </property>
+               <property name="minimum">
+                <number>0</number>
+               </property>
+               <property name="maximum">
+                <number>2147483647</number>
+               </property>
+               <property name="singleStep">
+                <number>1</number>
+               </property>
+               <property name="value">
+                <number>8</number>
                </property>
               </widget>
              </item>
@@ -189,24 +201,30 @@
               </widget>
              </item>
              <item row="3" column="1">
-              <widget class="QLineEdit" name="maxLevels">
+              <widget class="QSpinBox" name="maxLevels">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>8</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Максимум уровней</string>
                </property>
                <property name="toolTip">
                 <string>Число уровней, включая конечную сетку. 1 отключает многоуровневое уточнение.</string>
+               </property>
+               <property name="minimum">
+                <number>0</number>
+               </property>
+               <property name="maximum">
+                <number>2147483647</number>
+               </property>
+               <property name="singleStep">
+                <number>1</number>
+               </property>
+               <property name="value">
+                <number>8</number>
                </property>
               </widget>
              </item>
@@ -221,24 +239,33 @@
               </widget>
              </item>
              <item row="4" column="1">
-              <widget class="QLineEdit" name="gaussianSigma">
+              <widget class="QDoubleSpinBox" name="gaussianSigma">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>1</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Радиус влияния: сигма</string>
                </property>
                <property name="toolTip">
                 <string>Сигма гауссова ядра в ячейках текущего уровня. Ее квадрат должен быть конечным и положительным.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>0.1</double>
+               </property>
+               <property name="value">
+                <double>1</double>
                </property>
               </widget>
              </item>
@@ -368,24 +395,33 @@
               </widget>
              </item>
              <item row="0" column="1">
-              <widget class="QLineEdit" name="smoothness">
+              <widget class="QDoubleSpinBox" name="smoothness">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>1</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Вес сглаживания</string>
                </property>
                <property name="toolTip">
                 <string>Штраф за кривизну поверхности. Ноль отключает сглаживание.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>0.1</double>
+               </property>
+               <property name="value">
+                <double>1</double>
                </property>
               </widget>
              </item>
@@ -400,24 +436,33 @@
               </widget>
              </item>
              <item row="1" column="1">
-              <widget class="QLineEdit" name="priorWeight">
+              <widget class="QDoubleSpinBox" name="priorWeight">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>0.001</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Вес исходного тренда</string>
                </property>
                <property name="toolTip">
                 <string>Сохранение поверхности предыдущего уровня. Строго положительный вес необходим для устойчивого решения.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>0.001</double>
+               </property>
+               <property name="value">
+                <double>0.001</double>
                </property>
               </widget>
              </item>
@@ -432,24 +477,33 @@
               </widget>
              </item>
              <item row="2" column="1">
-              <widget class="QLineEdit" name="snapStrength">
+              <widget class="QDoubleSpinBox" name="snapStrength">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>100</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Сила Snap-привязки</string>
                </property>
                <property name="toolTip">
                 <string>Сила мягкой привязки узлов к значениям, перенесенным по Тейлору. Ноль отключает штраф.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>1</double>
+               </property>
+               <property name="value">
+                <double>100</double>
                </property>
               </widget>
              </item>
@@ -464,24 +518,33 @@
               </widget>
              </item>
              <item row="3" column="1">
-              <widget class="QLineEdit" name="finalPointStrength">
+              <widget class="QDoubleSpinBox" name="finalPointStrength">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>1000</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Сила финальной привязки</string>
                </property>
                <property name="toolTip">
                 <string>Мягкая привязка к контрольным точкам только на конечной сетке; ноль отключает штраф.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>10</double>
+               </property>
+               <property name="value">
+                <double>1000</double>
                </property>
               </widget>
              </item>
@@ -589,24 +652,30 @@
               </widget>
              </item>
              <item row="1" column="1">
-              <widget class="QLineEdit" name="maxControlProjectionIterations">
+              <widget class="QSpinBox" name="maxControlProjectionIterations">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>2000</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Итерации точной привязки</string>
                </property>
                <property name="toolTip">
                 <string>Лимит отдельного решателя точной привязки. Ноль допустим только при выключенной точной привязке.</string>
+               </property>
+               <property name="minimum">
+                <number>0</number>
+               </property>
+               <property name="maximum">
+                <number>2147483647</number>
+               </property>
+               <property name="singleStep">
+                <number>1</number>
+               </property>
+               <property name="value">
+                <number>2000</number>
                </property>
               </widget>
              </item>
@@ -621,24 +690,33 @@
               </widget>
              </item>
              <item row="2" column="1">
-              <widget class="QLineEdit" name="controlTolerance">
+              <widget class="QDoubleSpinBox" name="controlTolerance">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>1e-10</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Допуск точной привязки</string>
                </property>
                <property name="toolTip">
                 <string>Абсолютная ошибка в единицах значения поверхности. Алгоритм также учитывает машинную точность.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>1e-10</double>
+               </property>
+               <property name="value">
+                <double>1e-10</double>
                </property>
               </widget>
              </item>
@@ -746,24 +824,30 @@
               </widget>
              </item>
              <item row="1" column="1">
-              <widget class="QLineEdit" name="maxSolverIterations">
+              <widget class="QSpinBox" name="maxSolverIterations">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>1500</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Итерации на уровень</string>
                </property>
                <property name="toolTip">
                 <string>Лимит итераций основного решателя применяется отдельно к каждому уровню.</string>
+               </property>
+               <property name="minimum">
+                <number>0</number>
+               </property>
+               <property name="maximum">
+                <number>2147483647</number>
+               </property>
+               <property name="singleStep">
+                <number>1</number>
+               </property>
+               <property name="value">
+                <number>1500</number>
                </property>
               </widget>
              </item>
@@ -778,24 +862,33 @@
               </widget>
              </item>
              <item row="2" column="1">
-              <widget class="QLineEdit" name="relativeTolerance">
+              <widget class="QDoubleSpinBox" name="relativeTolerance">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>1e-9</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Относительный допуск</string>
                </property>
                <property name="toolTip">
                 <string>Относительная часть критерия остановки основного решателя; строго больше нуля.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>1e-9</double>
+               </property>
+               <property name="value">
+                <double>1e-9</double>
                </property>
               </widget>
              </item>
@@ -810,24 +903,33 @@
               </widget>
              </item>
              <item row="3" column="1">
-              <widget class="QLineEdit" name="absoluteTolerance">
+              <widget class="QDoubleSpinBox" name="absoluteTolerance">
                <property name="minimumSize">
                 <size>
                  <width>170</width>
                  <height>0</height>
                 </size>
                </property>
-               <property name="text">
-                <string>0</string>
-               </property>
-               <property name="clearButtonEnabled">
-                <bool>true</bool>
-               </property>
                <property name="accessibleName">
                 <string>Абсолютный допуск</string>
                </property>
                <property name="toolTip">
                 <string>Абсолютная часть критерия остановки основного решателя. Ноль оставляет только относительный допуск.</string>
+               </property>
+               <property name="decimals">
+                <number>20</number>
+               </property>
+               <property name="minimum">
+                <double>0</double>
+               </property>
+               <property name="maximum">
+                <double>1.7976931348623157e+308</double>
+               </property>
+               <property name="singleStep">
+                <double>1e-10</double>
+               </property>
+               <property name="value">
+                <double>0</double>
                </property>
               </widget>
              </item>
@@ -855,6 +957,9 @@
     </widget>
    </item>
   </layout>
+  <property name="locale">
+   <locale language="C" country="AnyCountry" />
+  </property>
  </widget>
  <tabstops>
   <tabstop>normalizePointWeights</tabstop>
