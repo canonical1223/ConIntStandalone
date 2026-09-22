@@ -2,32 +2,6 @@
 #include "ui_Form.h"
 
 #include <QMetaType>
-#include <cmath>
-#include <limits>
-
-namespace {
-// Только преобразование типа. Ограничения алгоритма проверяет вызывающий модуль.
-bool readCount(const QString& text, std::size_t& value)
-{
-    bool ok = false;
-    const auto parsed = text.toULongLong(&ok, 10);
-    if (!ok || text.trimmed().startsWith(QLatin1Char('-'))
-        || parsed > std::numeric_limits<std::size_t>::max()) return false;
-    value = static_cast<std::size_t>(parsed);
-    return true;
-}
-
-bool readReal(const QString& text, qreal& value)
-{
-    bool ok = false;
-    const double parsed = text.toDouble(&ok);
-    const qreal converted = static_cast<qreal>(parsed);
-    if (!ok || !std::isfinite(parsed) || !std::isfinite(static_cast<double>(converted))
-        || (parsed != 0 && converted == 0)) return false;
-    value = converted;
-    return true;
-}
-} // namespace
 
 Form::Form(QWidget* parent)
     : QWidget(parent), ui_(std::make_unique<Ui::Form>())
@@ -35,81 +9,84 @@ Form::Form(QWidget* parent)
     qRegisterMetaType<std::size_t>("std::size_t");
     ui_->setupUi(this);
     // Учитываем начальные значения, измененные в Qt Designer.
-    on_initialSnapNodes_textChanged(ui_->initialSnapNodes->text());
-    on_coarsestIntervals_textChanged(ui_->coarsestIntervals->text());
-    on_maxLevels_textChanged(ui_->maxLevels->text());
-    on_smoothness_textChanged(ui_->smoothness->text());
-    on_priorWeight_textChanged(ui_->priorWeight->text());
-    on_snapStrength_textChanged(ui_->snapStrength->text());
-    on_finalPointStrength_textChanged(ui_->finalPointStrength->text());
+    on_initialSnapNodes_valueChanged(ui_->initialSnapNodes->value());
+    on_coarsestIntervals_valueChanged(ui_->coarsestIntervals->value());
+    on_maxLevels_valueChanged(ui_->maxLevels->value());
+    on_smoothness_valueChanged(ui_->smoothness->value());
+    on_priorWeight_valueChanged(ui_->priorWeight->value());
+    on_snapStrength_valueChanged(ui_->snapStrength->value());
+    on_finalPointStrength_valueChanged(ui_->finalPointStrength->value());
     on_enforceExactControls_toggled(ui_->enforceExactControls->isChecked());
-    on_maxControlProjectionIterations_textChanged(ui_->maxControlProjectionIterations->text());
-    on_controlTolerance_textChanged(ui_->controlTolerance->text());
-    on_gaussianSigma_textChanged(ui_->gaussianSigma->text());
+    on_maxControlProjectionIterations_valueChanged(ui_->maxControlProjectionIterations->value());
+    on_controlTolerance_valueChanged(ui_->controlTolerance->value());
+    on_gaussianSigma_valueChanged(ui_->gaussianSigma->value());
     on_taylorOrder_currentIndexChanged(ui_->taylorOrder->currentIndex());
     on_normalizePointWeights_toggled(ui_->normalizePointWeights->isChecked());
-    on_maxSolverIterations_textChanged(ui_->maxSolverIterations->text());
-    on_relativeTolerance_textChanged(ui_->relativeTolerance->text());
-    on_absoluteTolerance_textChanged(ui_->absoluteTolerance->text());
+    on_maxSolverIterations_valueChanged(ui_->maxSolverIterations->value());
+    on_relativeTolerance_valueChanged(ui_->relativeTolerance->value());
+    on_absoluteTolerance_valueChanged(ui_->absoluteTolerance->value());
     on_throwOnNonConvergence_toggled(ui_->throwOnNonConvergence->isChecked());
 }
 
 Form::~Form() = default;
 
-void Form::on_initialSnapNodes_textChanged(const QString& text)
+void Form::on_initialSnapNodes_valueChanged(int value)
 {
-    std::size_t value;
-    if (!readCount(text, value) || value == initialSnapNodes_) return;
-    initialSnapNodes_ = value;
-    emit initialSnapNodesChanged(value);
+    if (value < 0) return;
+    const auto converted = static_cast<std::size_t>(value);
+    if (converted == initialSnapNodes_) return;
+    initialSnapNodes_ = converted;
+    emit initialSnapNodesChanged(initialSnapNodes_);
 }
 
-void Form::on_coarsestIntervals_textChanged(const QString& text)
+void Form::on_coarsestIntervals_valueChanged(int value)
 {
-    std::size_t value;
-    if (!readCount(text, value) || value == coarsestIntervals_) return;
-    coarsestIntervals_ = value;
-    emit coarsestIntervalsChanged(value);
+    if (value < 0) return;
+    const auto converted = static_cast<std::size_t>(value);
+    if (converted == coarsestIntervals_) return;
+    coarsestIntervals_ = converted;
+    emit coarsestIntervalsChanged(coarsestIntervals_);
 }
 
-void Form::on_maxLevels_textChanged(const QString& text)
+void Form::on_maxLevels_valueChanged(int value)
 {
-    std::size_t value;
-    if (!readCount(text, value) || value == maxLevels_) return;
-    maxLevels_ = value;
-    emit maxLevelsChanged(value);
+    if (value < 0) return;
+    const auto converted = static_cast<std::size_t>(value);
+    if (converted == maxLevels_) return;
+    maxLevels_ = converted;
+    emit maxLevelsChanged(maxLevels_);
 }
 
-void Form::on_smoothness_textChanged(const QString& text)
+void Form::on_smoothness_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == smoothness_) return;
-    smoothness_ = value;
-    emit smoothnessChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == smoothness_) return;
+    smoothness_ = converted;
+    emit smoothnessChanged(smoothness_);
 }
 
-void Form::on_priorWeight_textChanged(const QString& text)
+void Form::on_priorWeight_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == priorWeight_) return;
-    priorWeight_ = value;
-    emit priorWeightChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == priorWeight_) return;
+    priorWeight_ = converted;
+    emit priorWeightChanged(priorWeight_);
 }
 
-void Form::on_snapStrength_textChanged(const QString& text)
+void Form::on_snapStrength_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == snapStrength_) return;
-    snapStrength_ = value;
-    emit snapStrengthChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == snapStrength_) return;
+    snapStrength_ = converted;
+    emit snapStrengthChanged(snapStrength_);
 }
 
-void Form::on_finalPointStrength_textChanged(const QString& text)
+void Form::on_finalPointStrength_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == finalPointStrength_) return;
-    finalPointStrength_ = value;
-    emit finalPointStrengthChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == finalPointStrength_) return;
+    finalPointStrength_ = converted;
+    emit finalPointStrengthChanged(finalPointStrength_);
 }
 
 void Form::on_enforceExactControls_toggled(bool value)
@@ -119,28 +96,29 @@ void Form::on_enforceExactControls_toggled(bool value)
     emit enforceExactControlsChanged(value);
 }
 
-void Form::on_maxControlProjectionIterations_textChanged(const QString& text)
+void Form::on_maxControlProjectionIterations_valueChanged(int value)
 {
-    std::size_t value;
-    if (!readCount(text, value) || value == maxControlProjectionIterations_) return;
-    maxControlProjectionIterations_ = value;
-    emit maxControlProjectionIterationsChanged(value);
+    if (value < 0) return;
+    const auto converted = static_cast<std::size_t>(value);
+    if (converted == maxControlProjectionIterations_) return;
+    maxControlProjectionIterations_ = converted;
+    emit maxControlProjectionIterationsChanged(maxControlProjectionIterations_);
 }
 
-void Form::on_controlTolerance_textChanged(const QString& text)
+void Form::on_controlTolerance_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == controlTolerance_) return;
-    controlTolerance_ = value;
-    emit controlToleranceChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == controlTolerance_) return;
+    controlTolerance_ = converted;
+    emit controlToleranceChanged(controlTolerance_);
 }
 
-void Form::on_gaussianSigma_textChanged(const QString& text)
+void Form::on_gaussianSigma_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == gaussianSigma_) return;
-    gaussianSigma_ = value;
-    emit gaussianSigmaChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == gaussianSigma_) return;
+    gaussianSigma_ = converted;
+    emit gaussianSigmaChanged(gaussianSigma_);
 }
 
 void Form::on_taylorOrder_currentIndexChanged(int value)
@@ -157,28 +135,29 @@ void Form::on_normalizePointWeights_toggled(bool value)
     emit normalizePointWeightsChanged(value);
 }
 
-void Form::on_maxSolverIterations_textChanged(const QString& text)
+void Form::on_maxSolverIterations_valueChanged(int value)
 {
-    std::size_t value;
-    if (!readCount(text, value) || value == maxSolverIterations_) return;
-    maxSolverIterations_ = value;
-    emit maxSolverIterationsChanged(value);
+    if (value < 0) return;
+    const auto converted = static_cast<std::size_t>(value);
+    if (converted == maxSolverIterations_) return;
+    maxSolverIterations_ = converted;
+    emit maxSolverIterationsChanged(maxSolverIterations_);
 }
 
-void Form::on_relativeTolerance_textChanged(const QString& text)
+void Form::on_relativeTolerance_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == relativeTolerance_) return;
-    relativeTolerance_ = value;
-    emit relativeToleranceChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == relativeTolerance_) return;
+    relativeTolerance_ = converted;
+    emit relativeToleranceChanged(relativeTolerance_);
 }
 
-void Form::on_absoluteTolerance_textChanged(const QString& text)
+void Form::on_absoluteTolerance_valueChanged(double value)
 {
-    qreal value;
-    if (!readReal(text, value) || value == absoluteTolerance_) return;
-    absoluteTolerance_ = value;
-    emit absoluteToleranceChanged(value);
+    const auto converted = static_cast<qreal>(value);
+    if (converted == absoluteTolerance_) return;
+    absoluteTolerance_ = converted;
+    emit absoluteToleranceChanged(absoluteTolerance_);
 }
 
 void Form::on_throwOnNonConvergence_toggled(bool value)

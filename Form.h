@@ -55,22 +55,22 @@ signals:
 
 private slots:
     // Подключаются автоматически через setupUi()/connectSlotsByName().
-    void on_initialSnapNodes_textChanged(const QString& text);
-    void on_coarsestIntervals_textChanged(const QString& text);
-    void on_maxLevels_textChanged(const QString& text);
-    void on_smoothness_textChanged(const QString& text);
-    void on_priorWeight_textChanged(const QString& text);
-    void on_snapStrength_textChanged(const QString& text);
-    void on_finalPointStrength_textChanged(const QString& text);
+    void on_initialSnapNodes_valueChanged(int value);
+    void on_coarsestIntervals_valueChanged(int value);
+    void on_maxLevels_valueChanged(int value);
+    void on_smoothness_valueChanged(double value);
+    void on_priorWeight_valueChanged(double value);
+    void on_snapStrength_valueChanged(double value);
+    void on_finalPointStrength_valueChanged(double value);
     void on_enforceExactControls_toggled(bool value);
-    void on_maxControlProjectionIterations_textChanged(const QString& text);
-    void on_controlTolerance_textChanged(const QString& text);
-    void on_gaussianSigma_textChanged(const QString& text);
+    void on_maxControlProjectionIterations_valueChanged(int value);
+    void on_controlTolerance_valueChanged(double value);
+    void on_gaussianSigma_valueChanged(double value);
     void on_taylorOrder_currentIndexChanged(int value);
     void on_normalizePointWeights_toggled(bool value);
-    void on_maxSolverIterations_textChanged(const QString& text);
-    void on_relativeTolerance_textChanged(const QString& text);
-    void on_absoluteTolerance_textChanged(const QString& text);
+    void on_maxSolverIterations_valueChanged(int value);
+    void on_relativeTolerance_valueChanged(double value);
+    void on_absoluteTolerance_valueChanged(double value);
     void on_throwOnNonConvergence_toggled(bool value);
 
 private:
