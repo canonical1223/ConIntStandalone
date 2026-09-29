@@ -2,14 +2,15 @@
 
 #include "convergent_gridding.h"
 
+#include <QSaveFile>
+#include <QString>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -542,29 +543,38 @@ inline std::string formatBestOptions(const Result& result)
     return out.str();
 }
 
-inline void saveBestOptions(const Result& result,
-                            const std::filesystem::path& filePath)
+// QSaveFile preserves an existing report if writing or commit fails.
+inline void saveBestOptions(const Result& result, const QString& filePath)
 {
-    if (filePath.empty()) {
+    if (filePath.isEmpty()) {
         throw std::invalid_argument("autotune: report file path is empty");
     }
-    std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        throw std::runtime_error("autotune: cannot open the report file");
+    const std::string text = formatBestOptions(result);
+    if (text.size() > static_cast<std::size_t>(std::numeric_limits<qint64>::max())) {
+        throw std::length_error("autotune: report is too large for QSaveFile");
     }
-    file << formatBestOptions(result);
-    file.flush();
-    if (!file) {
-        throw std::runtime_error("autotune: failed to write the report file");
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        throw std::runtime_error("autotune: cannot open report file: " +
+                                 file.errorString().toStdString());
+    }
+    const qint64 size = static_cast<qint64>(text.size());
+    if (file.write(text.data(), size) != size) {
+        const std::string error = file.errorString().toStdString();
+        file.cancelWriting();
+        throw std::runtime_error("autotune: failed to write report file: " + error);
+    }
+    if (!file.commit()) {
+        throw std::runtime_error("autotune: failed to commit report file: " +
+                                 file.errorString().toStdString());
     }
 }
 
-// Convenience entry point: tune, save the exact parameter text, then print it.
-// Pass an absolute path on C: to make the destination independent of cwd.
+// Tune, save the parameter text with Qt Core, then print it to the console.
 inline Result tuneAndReport(
     const Surface& input, const Surface& reference,
     const std::vector<Point>& controls,
-    const std::filesystem::path& reportFileOnC,
+    const QString& reportFileOnC,
     const std::vector<Fault>& faults = {},
     SearchSpace search = defaultSearchSpace(),
     const Config& config = {},
@@ -574,8 +584,10 @@ inline Result tuneAndReport(
                          std::move(search), config, referenceMask);
     saveBestOptions(result, reportFileOnC);
     std::cout << formatBestOptions(result)
-              << "Saved to: " << reportFileOnC.string() << std::endl;
+              << "Saved to: " << reportFileOnC.toUtf8().constData() << std::endl;
     return result;
 }
 
 } // namespace convergent::autotune
+
+
