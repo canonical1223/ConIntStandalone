@@ -8,9 +8,15 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
 #include <limits>
+#include <locale>
 #include <new>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -491,6 +497,84 @@ inline Result tune(const Surface& input, const Surface& reference,
         const std::string cause = result.trials.empty() ? "no trials" : result.trials.back().error;
         throw std::runtime_error("autotune: all candidates failed; last error: " + cause);
     }
+    return result;
+}
+
+// The text is also valid C++ option assignments after declaring `options`.
+// All fields are printed, including fixed numerical solver settings.
+inline std::string formatBestOptions(const Result& result)
+{
+    if (!std::isfinite(static_cast<double>(result.bestScore))) {
+        throw std::invalid_argument("autotune: result has no successful candidate");
+    }
+    const auto& o = result.bestOptions;
+    const auto& m = result.bestMetrics;
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::boolalpha
+        << std::setprecision(std::numeric_limits<qreal>::max_digits10);
+    out << "// Best convergent_gridding options\n"
+        << "// score = " << result.bestScore << ", MAE = " << m.mae
+        << ", RMSE = " << m.rmse << ", P95 = " << m.p95 << "\n"
+        << "// bias = " << m.bias << ", Huber = " << m.huber
+        << ", maxAbsoluteError = " << m.maxAbsoluteError << "\n"
+        << "// comparedNodes = " << m.comparedNodes
+        << ", evaluatedCandidates = " << result.trials.size() << "\n"
+        << "convergent::ConvergentGriddingOptions options;\n"
+        << "options.initialSnapNodes = " << o.initialSnapNodes << ";\n"
+        << "options.coarsestIntervals = " << o.coarsestIntervals << ";\n"
+        << "options.maxLevels = " << o.maxLevels << ";\n"
+        << "options.smoothness = " << o.smoothness << ";\n"
+        << "options.priorWeight = " << o.priorWeight << ";\n"
+        << "options.snapStrength = " << o.snapStrength << ";\n"
+        << "options.finalPointStrength = " << o.finalPointStrength << ";\n"
+        << "options.enforceExactControls = " << o.enforceExactControls << ";\n"
+        << "options.maxControlProjectionIterations = "
+        << o.maxControlProjectionIterations << ";\n"
+        << "options.controlTolerance = " << o.controlTolerance << ";\n"
+        << "options.gaussianSigma = " << o.gaussianSigma << ";\n"
+        << "options.taylorOrder = " << o.taylorOrder << ";\n"
+        << "options.normalizePointWeights = " << o.normalizePointWeights << ";\n"
+        << "options.maxSolverIterations = " << o.maxSolverIterations << ";\n"
+        << "options.relativeTolerance = " << o.relativeTolerance << ";\n"
+        << "options.absoluteTolerance = " << o.absoluteTolerance << ";\n"
+        << "options.throwOnNonConvergence = " << o.throwOnNonConvergence << ";\n";
+    return out.str();
+}
+
+inline void saveBestOptions(const Result& result,
+                            const std::filesystem::path& filePath)
+{
+    if (filePath.empty()) {
+        throw std::invalid_argument("autotune: report file path is empty");
+    }
+    std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        throw std::runtime_error("autotune: cannot open the report file");
+    }
+    file << formatBestOptions(result);
+    file.flush();
+    if (!file) {
+        throw std::runtime_error("autotune: failed to write the report file");
+    }
+}
+
+// Convenience entry point: tune, save the exact parameter text, then print it.
+// Pass an absolute path on C: to make the destination independent of cwd.
+inline Result tuneAndReport(
+    const Surface& input, const Surface& reference,
+    const std::vector<Point>& controls,
+    const std::filesystem::path& reportFileOnC,
+    const std::vector<Fault>& faults = {},
+    SearchSpace search = defaultSearchSpace(),
+    const Config& config = {},
+    const std::vector<std::uint8_t>& referenceMask = {})
+{
+    Result result = tune(input, reference, controls, faults,
+                         std::move(search), config, referenceMask);
+    saveBestOptions(result, reportFileOnC);
+    std::cout << formatBestOptions(result)
+              << "Saved to: " << reportFileOnC.string() << std::endl;
     return result;
 }
 
