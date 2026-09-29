@@ -27,20 +27,20 @@
 namespace convergent::autotune {
 
 struct MetricWeights {
-    qreal mae{1};
-    qreal rmse{0};
-    qreal huber{0};
-    qreal p95{0};
+    double mae{1};
+    double rmse{0};
+    double huber{0};
+    double p95{0};
 };
 
 struct Metrics {
     std::size_t comparedNodes{};
-    qreal mae{};
-    qreal rmse{};
-    qreal bias{};
-    qreal huber{};
-    qreal p95{};
-    qreal maxAbsoluteError{};
+    double mae{};
+    double rmse{};
+    double bias{};
+    double huber{};
+    double p95{};
+    double maxAbsoluteError{};
 };
 
 // An empty field fixes that option at Config::baseline. Only modelling options
@@ -50,11 +50,11 @@ struct SearchSpace {
     std::vector<std::size_t> coarsestIntervals;
     std::vector<std::size_t> maxLevels;
     std::vector<int> taylorOrder;
-    std::vector<qreal> gaussianSigma;
-    std::vector<qreal> smoothness;
-    std::vector<qreal> priorWeight;
-    std::vector<qreal> snapStrength;
-    std::vector<qreal> finalPointStrength;
+    std::vector<double> gaussianSigma;
+    std::vector<double> smoothness;
+    std::vector<double> priorWeight;
+    std::vector<double> snapStrength;
+    std::vector<double> finalPointStrength;
     std::vector<bool> enforceExactControls;
     std::vector<bool> normalizePointWeights;
 };
@@ -65,11 +65,11 @@ inline SearchSpace defaultSearchSpace()
     space.initialSnapNodes = {4, 8, 16};
     space.coarsestIntervals = {4, 8, 16};
     space.taylorOrder = {0, 1, 2};
-    space.gaussianSigma = {qreal(0.5), qreal(1), qreal(2)};
-    space.smoothness = {qreal(1)};
-    space.priorWeight = {qreal(1e-4), qreal(1e-3), qreal(1e-2)};
-    space.snapStrength = {qreal(10), qreal(100), qreal(1000)};
-    space.finalPointStrength = {qreal(100), qreal(1000), qreal(10000)};
+    space.gaussianSigma = {0.5, 1.0, 2.0};
+    space.smoothness = {1.0};
+    space.priorWeight = {1e-4, 1e-3, 1e-2};
+    space.snapStrength = {10.0, 100.0, 1000.0};
+    space.finalPointStrength = {100.0, 1000.0, 10000.0};
     // Exactness and weight semantics are kept fixed unless explicitly searched.
     return space;
 }
@@ -77,7 +77,7 @@ inline SearchSpace defaultSearchSpace()
 struct Config {
     ConvergentGriddingOptions baseline{};
     MetricWeights metricWeights{};
-    qreal huberDelta{1}; // Z units; only used when huber has positive weight
+    double huberDelta{1}; // Z units; only used when huber has positive weight
     std::size_t maxEvaluations{64};
     std::uint64_t seed{42};
 };
@@ -85,7 +85,7 @@ struct Config {
 struct Trial {
     ConvergentGriddingOptions options{};
     Metrics metrics{};
-    qreal score{std::numeric_limits<qreal>::infinity()};
+    double score{std::numeric_limits<double>::infinity()};
     double elapsedSeconds{};
     bool success{};
     std::string error;
@@ -96,7 +96,7 @@ struct Result {
     ConvergentGriddingOptions bestOptions{};
     Surface bestSurface{};
     Metrics bestMetrics{};
-    qreal bestScore{std::numeric_limits<qreal>::infinity()};
+    double bestScore{std::numeric_limits<double>::infinity()};
     ConvergentGriddingReport bestReport{};
     std::size_t bestTrialIndex{};
     std::vector<Trial> trials;
@@ -104,7 +104,7 @@ struct Result {
 
 namespace detail {
 
-inline bool finite(qreal value) { return std::isfinite(static_cast<double>(value)); }
+inline bool finite(double value) { return std::isfinite(value); }
 
 inline void validateSurfaces(const Surface& input, const Surface& reference,
                              const std::vector<Point>& controls,
@@ -142,7 +142,7 @@ inline void validateSurfaces(const Surface& input, const Surface& reference,
         !(input.minx < input.maxx) || !(input.miny < input.maxy)) {
         throw std::invalid_argument("autotune: invalid grid bounds");
     }
-    for (qreal value : input.grid) {
+    for (double value : input.grid) {
         if (!finite(value)) throw std::invalid_argument("autotune: input grid must be finite");
     }
     bool anyControl = false;
@@ -236,12 +236,12 @@ inline std::vector<std::size_t> comparisonNodes(
 }
 
 inline Metrics measure(const Surface& candidate, const Surface& reference,
-                       const std::vector<std::size_t>& nodes, qreal delta)
+                       const std::vector<std::size_t>& nodes, double delta)
 {
     Metrics m;
     m.comparedNodes = nodes.size();
     long double absoluteSum = 0, squaredSum = 0, signedSum = 0, huberSum = 0;
-    std::vector<qreal> absoluteErrors;
+    std::vector<double> absoluteErrors;
     absoluteErrors.reserve(nodes.size());
     for (std::size_t i : nodes) {
         const long double error = static_cast<long double>(candidate.grid[i]) -
@@ -253,14 +253,14 @@ inline Metrics measure(const Surface& candidate, const Surface& reference,
         signedSum += error;
         const long double d = static_cast<long double>(delta);
         huberSum += absolute <= d ? absolute * absolute / (2 * d) : absolute - d / 2;
-        absoluteErrors.push_back(static_cast<qreal>(absolute));
-        m.maxAbsoluteError = std::max(m.maxAbsoluteError, static_cast<qreal>(absolute));
+        absoluteErrors.push_back(static_cast<double>(absolute));
+        m.maxAbsoluteError = std::max(m.maxAbsoluteError, static_cast<double>(absolute));
     }
     const long double n = static_cast<long double>(nodes.size());
-    m.mae = static_cast<qreal>(absoluteSum / n);
-    m.rmse = static_cast<qreal>(std::sqrt(squaredSum / n));
-    m.bias = static_cast<qreal>(signedSum / n);
-    m.huber = static_cast<qreal>(huberSum / n);
+    m.mae = static_cast<double>(absoluteSum / n);
+    m.rmse = static_cast<double>(std::sqrt(squaredSum / n));
+    m.bias = static_cast<double>(signedSum / n);
+    m.huber = static_cast<double>(huberSum / n);
     const std::size_t p95Index = static_cast<std::size_t>(
         std::ceil(0.95L * n)) - 1;
     std::nth_element(absoluteErrors.begin(), absoluteErrors.begin() + p95Index,
@@ -273,14 +273,14 @@ inline Metrics measure(const Surface& candidate, const Surface& reference,
     return m;
 }
 
-inline qreal score(const Metrics& m, const MetricWeights& w)
+inline double score(const Metrics& m, const MetricWeights& w)
 {
     const long double sum = static_cast<long double>(w.mae) + w.rmse + w.huber + w.p95;
     const long double value = (static_cast<long double>(w.mae) * m.mae +
         static_cast<long double>(w.rmse) * m.rmse +
         static_cast<long double>(w.huber) * m.huber +
         static_cast<long double>(w.p95) * m.p95) / sum;
-    const qreal result = static_cast<qreal>(value);
+    const double result = static_cast<double>(value);
     if (!finite(result)) throw std::runtime_error("autotune: score overflow");
     return result;
 }
@@ -404,7 +404,7 @@ inline Result tune(const Surface& input, const Surface& reference,
                 throw std::runtime_error("exact controls were not satisfied");
             }
             trial.metrics = detail::measure(surface, reference, nodes,
-                config.metricWeights.huber > 0 ? config.huberDelta : qreal(1));
+                config.metricWeights.huber > 0 ? config.huberDelta : 1.0);
             trial.score = detail::score(trial.metrics, config.metricWeights);
             trial.report = report;
             trial.success = true;
@@ -512,7 +512,7 @@ inline std::string formatBestOptions(const Result& result)
     std::ostringstream out;
     out.imbue(std::locale::classic());
     out << std::boolalpha
-        << std::setprecision(std::numeric_limits<qreal>::max_digits10);
+        << std::setprecision(std::numeric_limits<double>::max_digits10);
     out << "// Best convergent_gridding options\n"
         << "// score = " << result.bestScore << ", MAE = " << m.mae
         << ", RMSE = " << m.rmse << ", P95 = " << m.p95 << "\n"
