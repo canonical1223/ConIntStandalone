@@ -853,4 +853,468 @@ function(gs_add_doc_target MODULE_NAME QDOCCONF_FILENAME)
     )
 
     message(STATUS "[Docs] ----------------------------------------")
-    messa
+    message(STATUS "[Docs] Module   = ${MODULE_NAME}")
+    message(STATUS "[Docs] Conf     = ${_gs_mod_conf}")
+    message(STATUS "[Docs] Output   = ${_gs_out_dir}")
+    message(STATUS "[Docs] Stamp    = ${_gs_stamp}")
+
+    if (NOT EXISTS "${_gs_mod_conf}")
+
+        message(FATAL_ERROR
+            "[Docs] ${MODULE_NAME}: qdocconf not found: ${_gs_mod_conf}"
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Include-пути.
+    # -------------------------------------------------------------------------
+
+    set(_gs_mingw_paths
+        "${_gs_mingw_cxx}"
+        "${_gs_mingw_cxx_arch}"
+        "${_gs_mingw_cxx_back}"
+        "${_gs_mingw_inc}"
+        "${_gs_mingw_sys}"
+    )
+
+    _gs_build_include_path_args(
+        "${MODULE_NAME}"
+        "${_gs_qt_headers}"
+        "${_gs_mingw_paths}"
+        _gs_include_path_args
+    )
+
+    # -------------------------------------------------------------------------
+    # Окружение QDoc.
+    # -------------------------------------------------------------------------
+
+    _gs_get_qdoc_environment(_gs_qdoc_env)
+
+    # -------------------------------------------------------------------------
+    # Лог аргументов.
+    # -------------------------------------------------------------------------
+
+    get_filename_component(
+        _gs_log_dir
+        "${_gs_html_root}/../logs"
+        ABSOLUTE
+    )
+
+    _gs_write_qdoc_args_log(
+        "${MODULE_NAME}"
+        "${_gs_log_dir}"
+        "${_gs_include_path_args}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Команда генерации.
+    #
+    # Каталог создаётся ДО запуска QDoc.
+    # Stamp создаётся ПОСЛЕ успешного завершения QDoc.
+    # -------------------------------------------------------------------------
+
+    set(_gs_qdoc_command
+        "${CMAKE_COMMAND}" -E make_directory "${_gs_out_dir}"
+
+        COMMAND
+        "${CMAKE_COMMAND}" -E env
+        ${_gs_qdoc_env}
+        "${QDOC_EXECUTABLE}"
+        --no-link-errors
+        ${_gs_include_path_args}
+        "${_gs_mod_conf}"
+
+        COMMAND
+        "${CMAKE_COMMAND}" -E touch "${_gs_stamp}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Отдельная цель документации.
+    #
+    # Если stamp отсутствует или устарел, QDoc будет запущен.
+    # Наличие HTML-каталога само по себе не считается признаком готовности.
+    # -------------------------------------------------------------------------
+
+    add_custom_command(
+        OUTPUT "${_gs_stamp}"
+
+        ${_gs_qdoc_command}
+
+        DEPENDS
+            "${_gs_mod_conf}"
+            "${QDOC_EXECUTABLE}"
+
+        WORKING_DIRECTORY
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+
+        COMMENT
+            "[Docs] QDoc: ${MODULE_NAME}"
+
+        VERBATIM
+    )
+
+    add_custom_target(
+        "docs_${MODULE_NAME}"
+        DEPENDS "${_gs_stamp}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Документация зависит от сборки своего модуля.
+    #
+    # При запуске docs_MODULE_NAME сначала собирается MODULE_NAME.
+    # -------------------------------------------------------------------------
+
+    add_dependencies(
+        "docs_${MODULE_NAME}"
+        "${MODULE_NAME}"
+    )
+
+    # -------------------------------------------------------------------------
+    # POST_BUILD.
+    #
+    # При обычной сборке модуля QDoc запускается после его сборки.
+    #
+    # Важно:
+    # POST_BUILD допустим для исполняемых файлов и библиотек.
+    # Для INTERFACE_LIBRARY и UTILITY не добавляем.
+    # -------------------------------------------------------------------------
+
+    get_target_property(
+        _gs_target_type
+        "${MODULE_NAME}"
+        TYPE
+    )
+
+    if (_gs_target_type STREQUAL "EXECUTABLE"
+            OR _gs_target_type STREQUAL "STATIC_LIBRARY"
+            OR _gs_target_type STREQUAL "SHARED_LIBRARY"
+            OR _gs_target_type STREQUAL "MODULE_LIBRARY")
+
+        add_custom_command(
+            TARGET "${MODULE_NAME}"
+            POST_BUILD
+
+            ${_gs_qdoc_command}
+
+            COMMENT
+                "[Docs] Generate HTML after build: ${MODULE_NAME}"
+
+            VERBATIM
+        )
+
+        message(STATUS
+            "[Docs] ${MODULE_NAME}: POST_BUILD QDoc enabled"
+        )
+
+    else()
+
+        message(STATUS
+            "[Docs] ${MODULE_NAME}: POST_BUILD skipped for target type ${_gs_target_type}"
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Принудительная пересборка документации модуля.
+    #
+    # Удаляем каталог документации и stamp.
+    # Затем запускаем отдельную цель docs_MODULE_NAME.
+    # -------------------------------------------------------------------------
+
+    add_custom_target(
+        "docs_${MODULE_NAME}_rebuild"
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E remove_directory "${_gs_out_dir}"
+
+        COMMAND
+            "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}"
+            --config "$<CONFIG>"
+            --target "docs_${MODULE_NAME}"
+
+        COMMENT
+            "[Docs] Force rebuild docs: ${MODULE_NAME}"
+
+        VERBATIM
+    )
+
+    # -------------------------------------------------------------------------
+    # Регистрация модуля для общего индекса.
+    # -------------------------------------------------------------------------
+
+    set_property(
+        GLOBAL
+        APPEND
+        PROPERTY GS_DOC_MODULE_TARGETS
+        "docs_${MODULE_NAME}"
+    )
+
+    set_property(
+        GLOBAL
+        APPEND
+        PROPERTY GS_DOC_MODULE_STAMPS
+        "${_gs_stamp}"
+    )
+
+    message(STATUS
+        "[Docs] ${MODULE_NAME}: documentation target registered"
+    )
+
+endfunction()
+
+# -----------------------------------------------------------------------------
+# gs_finalize_doc_index()
+#
+# Вызывается один раз в корневом CMakeLists.txt после всех add_subdirectory().
+#
+# Создаёт общий индекс GeoScheme.
+# -----------------------------------------------------------------------------
+
+function(gs_finalize_doc_index)
+
+    if (NOT GEOSCHEME_BUILD_DOCS)
+        return()
+    endif()
+
+    _gs_find_qdoc()
+    _gs_compute_qt_env()
+    _gs_compute_safe_path()
+
+    get_filename_component(
+        _gs_project_root
+        "${CMAKE_SOURCE_DIR}"
+        DIRECTORY
+    )
+
+    set(
+        _gs_html_root
+        "${_gs_project_root}/doc/qdoc/html"
+    )
+
+    set(
+        _gs_main_conf
+        "${_gs_project_root}/doc/qdoc/main-index/GeoScheme.qdocconf"
+    )
+
+    set(
+        _gs_out_dir
+        "${_gs_html_root}/GeoScheme"
+    )
+
+    set(
+        _gs_stamp
+        "${_gs_out_dir}/.cmake_docs_stamp"
+    )
+
+    get_filename_component(
+        _gs_main_conf_dir
+        "${_gs_main_conf}"
+        DIRECTORY
+    )
+
+    get_property(
+        _gs_module_targets
+        GLOBAL
+        PROPERTY GS_DOC_MODULE_TARGETS
+    )
+
+    get_property(
+        _gs_module_stamps
+        GLOBAL
+        PROPERTY GS_DOC_MODULE_STAMPS
+    )
+
+    message(STATUS "[Docs] ----------------------------------------")
+    message(STATUS "[Docs] GeoScheme index")
+    message(STATUS "[Docs] Conf = ${_gs_main_conf}")
+    message(STATUS "[Docs] Out  = ${_gs_out_dir}")
+    message(STATUS "[Docs] Modules = ${_gs_module_targets}")
+
+    if (NOT EXISTS "${_gs_main_conf}")
+
+        message(FATAL_ERROR
+            "[Docs] Main qdocconf not found: ${_gs_main_conf}"
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Базовые include-пути.
+    # -------------------------------------------------------------------------
+
+    set(_gs_index_include_args "")
+
+    foreach(_path
+            "${_gs_mingw_cxx}"
+            "${_gs_mingw_cxx_arch}"
+            "${_gs_mingw_cxx_back}"
+            "${_gs_mingw_inc}"
+            "${_gs_mingw_sys}")
+
+        if (IS_DIRECTORY "${_path}")
+            list(APPEND _gs_index_include_args "-I${_path}")
+        endif()
+
+    endforeach()
+
+    foreach(_sub
+            ""
+            "QtCore"
+            "QtGui"
+            "QtWidgets"
+            "QtXml"
+            "QtSql"
+            "QtNetwork"
+            "QtSvg"
+            "QtPrintSupport"
+            "QtConcurrent")
+
+        if (_sub STREQUAL "")
+
+            set(_qt_path "${_gs_qt_headers}")
+
+        else()
+
+            set(_qt_path "${_gs_qt_headers}/${_sub}")
+
+        endif()
+
+        if (IS_DIRECTORY "${_qt_path}")
+            list(APPEND _gs_index_include_args "-I${_qt_path}")
+        endif()
+
+    endforeach()
+
+    list(REMOVE_DUPLICATES _gs_index_include_args)
+
+    # -------------------------------------------------------------------------
+    # Лог аргументов общего индекса.
+    # -------------------------------------------------------------------------
+
+    get_filename_component(
+        _gs_log_dir
+        "${_gs_html_root}/../logs"
+        ABSOLUTE
+    )
+
+    file(MAKE_DIRECTORY "${_gs_log_dir}")
+
+    string(
+        REPLACE ";"
+        "\n"
+        _gs_index_args_pretty
+        "${_gs_index_include_args}"
+    )
+
+    file(WRITE
+        "${_gs_log_dir}/GeoScheme_index_qdoc_args.txt"
+
+        "# Аргументы -I для общего индекса GeoScheme\n"
+        "# Сформировано при конфигурации CMake.\n\n"
+        "${_gs_index_args_pretty}\n"
+    )
+
+    # -------------------------------------------------------------------------
+    # Окружение QDoc.
+    # -------------------------------------------------------------------------
+
+    _gs_get_qdoc_environment(_gs_index_qdoc_env)
+
+    # -------------------------------------------------------------------------
+    # Команда генерации общего индекса.
+    # -------------------------------------------------------------------------
+
+    add_custom_command(
+        OUTPUT "${_gs_stamp}"
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E make_directory "${_gs_out_dir}"
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E env
+            ${_gs_index_qdoc_env}
+            "${QDOC_EXECUTABLE}"
+            --no-link-errors
+            ${_gs_index_include_args}
+            "${_gs_main_conf}"
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E touch "${_gs_stamp}"
+
+        DEPENDS
+            "${_gs_main_conf}"
+            "${QDOC_EXECUTABLE}"
+            ${_gs_module_stamps}
+
+        WORKING_DIRECTORY
+            "${_gs_main_conf_dir}"
+
+        COMMENT
+            "[Docs] QDoc: GeoScheme index"
+
+        VERBATIM
+    )
+
+    add_custom_target(
+        docs_GeoScheme_index
+        DEPENDS "${_gs_stamp}"
+    )
+
+    # Общий индекс собирается после документации модулей.
+
+    if (_gs_module_targets)
+
+        add_dependencies(
+            docs_GeoScheme_index
+            ${_gs_module_targets}
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Полная принудительная пересборка.
+    # -------------------------------------------------------------------------
+
+    add_custom_target(
+        docs_rebuild_all
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E remove_directory "${_gs_html_root}"
+
+        COMMAND
+            "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}"
+            --config "$<CONFIG>"
+            --target docs_GeoScheme_index
+
+        COMMENT
+            "[Docs] Full documentation rebuild from scratch"
+
+        VERBATIM
+    )
+
+    message(STATUS
+        "[Docs] GeoScheme index target registered"
+    )
+
+endfunction()
+Как подключать и запускать
+В корневом CMakeLists.txt после всех add_subdirectory():
+gs_finalize_doc_index()
+В CMakeLists.txt каждого модуля после создания его библиотеки:
+gs_add_doc_target(GeoProjectData GeoProjectData.qdocconf)
+Названия target и .qdocconf указывай свои.
+Цели сборки
+Команда	Результат
+mingw32-make GeoProjectData	Сборка модуля и запуск его POST_BUILD QDoc
+mingw32-make docs_GeoProjectData	Сборка модуля и документации
+mingw32-make docs_GeoProjectData_rebuild	Принудительная пересборка документации модуля
+mingw32-make docs_GeoScheme_index	Генерация общего индекса и документации модулей
+mingw32-make docs_rebuild_all	Полная пересборка документации
+На что обратить внимание при первой проверке
+	•	Удали старый каталог doc/qdoc/html, чтобы старые HTML-файлы и stamp не влияли на результат.
+	•	Переконфигурируй проект CMake.
+	•	Собери один модуль, например GeoProjectData.
+	•	Проверь вывод [Docs] Generate HTML after build.
+	•	Если QDoc завершился с ошибкой, stamp не должен создаться.
+Отдельно: в этом варианте я сохранил фиксированную структуру MinGW 7.3.0 из твоего исходного кода. Если проект будет собираться с другой версией MinGW, этот участок тоже нужно будет сделать полностью динамическим. Кроме того, POST_BUILD не гарантирует запуск документации при повторном вызове сборки уже актуального target: если модуль не пересобирается, post-build команда не выполняется.
