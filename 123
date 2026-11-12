@@ -1,0 +1,1510 @@
+Ниже полный обновлённый GeoSchemeDocs.cmake. Взял за основу твою актуальную версию, сохранил существующие функции и логику зависимостей.
+Что сохранено и исправлено:
+	•	add_dependencies(docs_${MODULE_NAME} ${MODULE_NAME}) — направление зависимости не менял.
+	•	ALL добавлен к целям документации модулей.
+	•	Убрана проверка существования HTML-каталога как признака готовой документации.
+	•	AUTOGEN-пути определяются динамически.
+	•		•	Переменные GEOPROIMPORT_AUTOGEN_INCLUDE и GEOSCHEMEIMPEXP_AUTOGEN_INCLUDE сохранены.
+	•	Каталог создаётся до запуска QDoc.
+	•	Пересборка модуля удаляет каталог со штампом.
+	•	Сохранены общая цель индекса и полная пересборка.
+	•	При GEOSCHEME_BUILD_DOCS=OFF документационные цели не создаются.
+Полный текст:
+# =============================================================================
+# GeoSchemeDocs.cmake
+#
+# Централизованный модуль сборки QDoc-документации для ПО «Геосхема».
+#
+# Подключение из корневого CMakeLists.txt:
+#   include(GeoSchemeDocs.cmake)
+#
+# Использование в CMakeLists.txt модулей:
+#   gs_add_doc_target(GeoProjectData GeoProjectData.qdocconf)
+#
+# После всех add_subdirectory():
+#   gs_finalize_doc_index()
+#
+# Основные цели:
+#   docs_<Module>          - документация отдельного модуля;
+#   docs_<Module>_rebuild  - принудительная пересборка модуля;
+#   docs_GeoScheme_index   - общий индекс документации;
+#   docs_rebuild_all       - полная пересборка документации.
+#
+# Совместимость: CMake 3.14+, Qt 5.
+# =============================================================================
+
+include_guard(GLOBAL)
+
+# =============================================================================
+# 1. НАСТРОЙКИ
+# =============================================================================
+
+if(NOT DEFINED GEOSCHEME_QDOC_ROOT)
+    set(GEOSCHEME_QDOC_ROOT
+        "${CMAKE_SOURCE_DIR}/../doc/qdoc"
+        CACHE PATH
+        "Root directory containing GeoScheme QDoc configuration"
+    )
+endif()
+
+if(NOT DEFINED GEOSCHEME_QDOC_HTML_DIR)
+    set(GEOSCHEME_QDOC_HTML_DIR
+        "${GEOSCHEME_QDOC_ROOT}/html"
+        CACHE PATH
+        "Output directory for generated QDoc HTML"
+    )
+endif()
+
+if(NOT DEFINED GEOSCHEME_QDOC_INDEX_CONFIG)
+    set(GEOSCHEME_QDOC_INDEX_CONFIG
+        "${GEOSCHEME_QDOC_ROOT}/main-index/GeoScheme.qdocconf"
+        CACHE FILEPATH
+        "QDoc configuration for the GeoScheme main index"
+    )
+endif()
+
+set(GEOSCHEME_QDOC_QT_ROOT ""
+    CACHE PATH
+    "Qt installation root used to locate QDoc and headers"
+)
+
+set(GEOSCHEME_QDOC_QT_DOCS ""
+    CACHE PATH
+    "Qt documentation directory used by QDoc"
+)
+
+set(GEOSCHEME_QDOC_QT_MODULES
+    "QtCore;QtGui;QtWidgets;QtXml;QtSql;QtNetwork;QtSvg;QtPrintSupport;QtConcurrent"
+    CACHE STRING
+    "Qt header subdirectories passed to QDoc"
+)
+
+# =============================================================================
+# 2. ОПРЕДЕЛЕНИЕ QT И MINGW
+# =============================================================================
+
+macro(_gs_compute_qt_env)
+
+    find_package(Qt5 REQUIRED COMPONENTS Core)
+
+    if(NOT Qt5Core_DIR)
+        message(FATAL_ERROR
+            "[Docs] Qt5Core_DIR is not defined."
+        )
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Определение корня Qt.
+    #
+    # Типичная структура:
+    # <QtRoot>/lib/cmake/Qt5Core
+    #
+    # Для Qt Online Installer:
+    # <QtRoot>/include
+    # <QtRoot>/bin
+    # -------------------------------------------------------------------------
+
+    set(_gs_qt_root "")
+
+    if(GEOSCHEME_QDOC_QT_ROOT)
+        get_filename_component(
+            _gs_qt_root
+            "${GEOSCHEME_QDOC_QT_ROOT}"
+            ABSOLUTE
+        )
+    else()
+
+        foreach(_gs_depth 3 4 2)
+
+            if(_gs_depth EQUAL 3)
+                get_filename_component(
+                    _gs_candidate
+                    "${Qt5Core_DIR}/../../.."
+                    ABSOLUTE
+                )
+            elseif(_gs_depth EQUAL 4)
+                get_filename_component(
+                    _gs_candidate
+                    "${Qt5Core_DIR}/../../../.."
+                    ABSOLUTE
+                )
+            else()
+                get_filename_component(
+                    _gs_candidate
+                    "${Qt5Core_DIR}/../.."
+                    ABSOLUTE
+                )
+            endif()
+
+            if(IS_DIRECTORY "${_gs_candidate}/include"
+               OR IS_DIRECTORY "${_gs_candidate}/bin")
+
+                set(_gs_qt_root "${_gs_candidate}")
+                break()
+
+            endif()
+
+        endforeach()
+
+    endif()
+
+    if(NOT _gs_qt_root)
+        message(FATAL_ERROR
+            "[Docs] Cannot determine Qt root from ${Qt5Core_DIR}. "
+            "Set GEOSCHEME_QDOC_QT_ROOT."
+        )
+    endif()
+
+    set(_gs_qt_prefix "${_gs_qt_root}")
+    set(_gs_qt_bin "${_gs_qt_root}/bin")
+    set(_gs_qt_headers "${_gs_qt_root}/include")
+
+    # -------------------------------------------------------------------------
+    # Версия Qt.
+    # -------------------------------------------------------------------------
+
+    if(Qt5Core_VERSION)
+        set(_gs_qt_version "${Qt5Core_VERSION}")
+    elseif(Qt5_VERSION)
+        set(_gs_qt_version "${Qt5_VERSION}")
+    else()
+        set(_gs_qt_version "${Qt5Core_VERSION_STRING}")
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Каталог документации Qt.
+    # -------------------------------------------------------------------------
+
+    get_filename_component(
+        _gs_qt_version_root
+        "${_gs_qt_root}"
+        DIRECTORY
+    )
+
+    get_filename_component(
+        _gs_qt_sdk_root
+        "${_gs_qt_version_root}"
+        DIRECTORY
+    )
+
+    if(NOT GEOSCHEME_QDOC_QT_DOCS)
+
+        set(_gs_qt_docs_candidates
+            "${_gs_qt_sdk_root}/Docs/Qt-${_gs_qt_version}"
+            "${_gs_qt_root}/Docs/Qt-${_gs_qt_version}"
+            "${_gs_qt_root}/share/qt5/doc"
+            "${_gs_qt_root}/share/doc/qt${_gs_qt_version}"
+            "${_gs_qt_root}/share/doc/qt5"
+        )
+
+        set(_gs_qt_docs_candidate "")
+
+        foreach(_gs_candidate IN LISTS _gs_qt_docs_candidates)
+
+            if(IS_DIRECTORY "${_gs_candidate}")
+                set(_gs_qt_docs_candidate "${_gs_candidate}")
+                break()
+            endif()
+
+        endforeach()
+
+        if(NOT _gs_qt_docs_candidate)
+            list(GET _gs_qt_docs_candidates 0 _gs_qt_docs_candidate)
+        endif()
+
+        set(GEOSCHEME_QDOC_QT_DOCS
+            "${_gs_qt_docs_candidate}"
+            CACHE PATH
+            "Qt documentation directory used by QDoc"
+            FORCE
+        )
+
+    endif()
+
+    set(_gs_qt_docs "${GEOSCHEME_QDOC_QT_DOCS}")
+
+    # -------------------------------------------------------------------------
+    # Определение MinGW из фактически выбранного компилятора.
+    #
+    # Не фиксируем:
+    #   mingw730_64
+    #   x86_64-w64-mingw32
+    #   7.3.0
+    # -------------------------------------------------------------------------
+
+    set(_gs_mingw_root "")
+    set(_gs_mingw_bin "")
+    set(_gs_mingw_cxx "")
+    set(_gs_mingw_cxx_arch "")
+    set(_gs_mingw_cxx_back "")
+    set(_gs_mingw_inc "")
+    set(_gs_mingw_sys "")
+
+    if(MINGW AND CMAKE_CXX_COMPILER)
+
+        get_filename_component(
+            _gs_compiler_bin
+            "${CMAKE_CXX_COMPILER}"
+            DIRECTORY
+        )
+
+        get_filename_component(
+            _gs_mingw_root
+            "${_gs_compiler_bin}/.."
+            ABSOLUTE
+        )
+
+        set(_gs_mingw_bin "${_gs_compiler_bin}")
+
+        file(GLOB _gs_gcc_version_dirs
+            LIST_DIRECTORIES TRUE
+            "${_gs_mingw_root}/lib/gcc/*/*"
+        )
+
+        set(_gs_gcc_dir "")
+
+        foreach(_gs_candidate IN LISTS _gs_gcc_version_dirs)
+
+            get_filename_component(
+                _gs_candidate_version
+                "${_gs_candidate}"
+                NAME
+            )
+
+            if(CMAKE_CXX_COMPILER_VERSION
+               STREQUAL "${_gs_candidate_version}")
+
+                set(_gs_gcc_dir "${_gs_candidate}")
+                break()
+
+            endif()
+
+        endforeach()
+
+        if(NOT _gs_gcc_dir AND _gs_gcc_version_dirs)
+            list(GET _gs_gcc_version_dirs 0 _gs_gcc_dir)
+        endif()
+
+        if(_gs_gcc_dir)
+
+            get_filename_component(
+                _gs_gcc_target
+                "${_gs_gcc_dir}"
+                DIRECTORY
+            )
+
+            get_filename_component(
+                _gs_gcc_target
+                "${_gs_gcc_target}"
+                NAME
+            )
+
+            set(_gs_mingw_cxx
+                "${_gs_gcc_dir}/include/c++"
+            )
+
+            set(_gs_mingw_cxx_arch
+                "${_gs_mingw_cxx}/${_gs_gcc_target}"
+            )
+
+            set(_gs_mingw_cxx_back
+                "${_gs_mingw_cxx}/backward"
+            )
+
+            set(_gs_mingw_inc
+                "${_gs_gcc_dir}/include"
+            )
+
+            set(_gs_mingw_sys
+                "${_gs_mingw_root}/${_gs_gcc_target}/include"
+            )
+
+        endif()
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Проверка каталогов.
+    # -------------------------------------------------------------------------
+
+    if(NOT IS_DIRECTORY "${_gs_qt_headers}")
+        message(WARNING
+            "[Docs] Qt headers not found: ${_gs_qt_headers}"
+        )
+    endif()
+
+    if(NOT IS_DIRECTORY "${_gs_qt_docs}")
+
+        message(WARNING
+            "[Docs] Qt documentation not found: ${_gs_qt_docs}"
+        )
+
+        message(WARNING
+            "[Docs] Install Qt Documentation or set GEOSCHEME_QDOC_QT_DOCS."
+        )
+
+    else()
+
+        foreach(_gs_conf compat macros qt-cpp-defines fileextensions)
+
+            if(NOT EXISTS
+               "${_gs_qt_docs}/global/${_gs_conf}.qdocconf")
+
+                message(WARNING
+                    "[Docs] Missing Qt QDoc config: "
+                    "${_gs_qt_docs}/global/${_gs_conf}.qdocconf"
+                )
+
+            endif()
+
+        endforeach()
+
+    endif()
+
+    message(STATUS "[Docs] Qt root           = ${_gs_qt_root}")
+    message(STATUS "[Docs] Qt version        = ${_gs_qt_version}")
+    message(STATUS "[Docs] Qt headers        = ${_gs_qt_headers}")
+    message(STATUS "[Docs] Qt documentation  = ${_gs_qt_docs}")
+
+    if(_gs_mingw_root)
+        message(STATUS "[Docs] MinGW root        = ${_gs_mingw_root}")
+        message(STATUS "[Docs] MinGW C++         = ${_gs_mingw_cxx}")
+    endif()
+
+endmacro()
+
+# =============================================================================
+# 3. ПОИСК QDOC
+# =============================================================================
+
+macro(_gs_find_qdoc)
+
+    if(QDOC_EXECUTABLE)
+
+        if(NOT EXISTS "${QDOC_EXECUTABLE}")
+            message(FATAL_ERROR
+                "[Docs] QDOC_EXECUTABLE does not exist: ${QDOC_EXECUTABLE}"
+            )
+        endif()
+
+    else()
+
+        find_program(_gs_qdoc_candidate
+            NAMES qdoc qdoc.exe
+            PATHS "${_gs_qt_bin}"
+            NO_DEFAULT_PATH
+        )
+
+        if(NOT _gs_qdoc_candidate)
+
+            find_program(_gs_qdoc_candidate_fallback
+                NAMES qdoc qdoc.exe
+            )
+
+            if(_gs_qdoc_candidate_fallback)
+                set(_gs_qdoc_candidate
+                    "${_gs_qdoc_candidate_fallback}"
+                )
+            endif()
+
+        endif()
+
+        if(NOT _gs_qdoc_candidate)
+            message(FATAL_ERROR
+                "[Docs] QDoc was not found. "
+                "Set QDOC_EXECUTABLE to its full path."
+            )
+        endif()
+
+        set(QDOC_EXECUTABLE
+            "${_gs_qdoc_candidate}"
+            CACHE FILEPATH
+            "Path to QDoc executable"
+            FORCE
+        )
+
+    endif()
+
+    message(STATUS "[Docs] QDoc executable = ${QDOC_EXECUTABLE}")
+
+endmacro()
+
+# =============================================================================
+# 4. БЕЗОПАСНЫЙ PATH ДЛЯ QDOC
+# =============================================================================
+
+macro(_gs_compute_safe_path)
+
+    file(TO_CMAKE_PATH
+        "$ENV{PATH}"
+        _gs_path_entries
+    )
+
+    set(_gs_preferred_path "")
+
+    if(IS_DIRECTORY "${_gs_qt_bin}")
+        list(APPEND _gs_preferred_path "${_gs_qt_bin}")
+    endif()
+
+    if(_gs_mingw_bin AND IS_DIRECTORY "${_gs_mingw_bin}")
+        list(APPEND _gs_preferred_path "${_gs_mingw_bin}")
+    endif()
+
+    list(APPEND _gs_preferred_path ${_gs_path_entries})
+
+    list(REMOVE_DUPLICATES _gs_preferred_path)
+
+    file(TO_NATIVE_PATH
+        "${_gs_preferred_path}"
+        _gs_safe_path
+    )
+
+    message(STATUS "[Docs] QDoc PATH = ${_gs_safe_path}")
+
+endmacro()
+
+# =============================================================================
+# 5. ПОЛУЧЕНИЕ AUTOGEN-ПУТИ ЦЕЛИ
+# =============================================================================
+
+function(_gs_get_target_autogen_include TARGET_NAME RESULT_VAR)
+
+    set(_gs_result "")
+
+    if(NOT TARGET "${TARGET_NAME}")
+        set(${RESULT_VAR} "" PARENT_SCOPE)
+        return()
+    endif()
+
+    get_target_property(
+        _gs_autogen_dir
+        "${TARGET_NAME}"
+        AUTOGEN_BUILD_DIR
+    )
+
+    if(NOT _gs_autogen_dir
+       OR _gs_autogen_dir MATCHES "-NOTFOUND$")
+
+        get_target_property(
+            _gs_automoc
+            "${TARGET_NAME}"
+            AUTOMOC
+        )
+
+        get_target_property(
+            _gs_autouic
+            "${TARGET_NAME}"
+            AUTOUIC
+        )
+
+        get_target_property(
+            _gs_autorcc
+            "${TARGET_NAME}"
+            AUTORCC
+        )
+
+        if(_gs_automoc OR _gs_autouic OR _gs_autorcc)
+
+            get_target_property(
+                _gs_binary_dir
+                "${TARGET_NAME}"
+                BINARY_DIR
+            )
+
+            if(_gs_binary_dir)
+                set(_gs_autogen_dir
+                    "${_gs_binary_dir}/${TARGET_NAME}_autogen"
+                )
+            endif()
+
+        endif()
+
+    endif()
+
+    if(_gs_autogen_dir
+       AND NOT _gs_autogen_dir MATCHES "-NOTFOUND$"
+       AND NOT _gs_autogen_dir MATCHES "\\$<")
+
+        if(NOT IS_ABSOLUTE "${_gs_autogen_dir}")
+
+            get_target_property(
+                _gs_binary_dir
+                "${TARGET_NAME}"
+                BINARY_DIR
+            )
+
+            get_filename_component(
+                _gs_autogen_dir
+                "${_gs_autogen_dir}"
+                ABSOLUTE
+                BASE_DIR "${_gs_binary_dir}"
+            )
+
+        endif()
+
+        set(_gs_result "${_gs_autogen_dir}/include")
+
+    endif()
+
+    set(${RESULT_VAR} "${_gs_result}" PARENT_SCOPE)
+
+endfunction()
+
+# =============================================================================
+# 6. РЕКУРСИВНЫЙ СБОР INCLUDE-ПУТЕЙ
+# =============================================================================
+
+function(_gs_collect_includes TARGET_NAME OUT_INCLUDES OUT_VISITED VISITED)
+
+    if(NOT TARGET "${TARGET_NAME}")
+        set(${OUT_INCLUDES} "" PARENT_SCOPE)
+        set(${OUT_VISITED} "${VISITED}" PARENT_SCOPE)
+        return()
+    endif()
+
+    list(FIND VISITED "${TARGET_NAME}" _gs_visited_index)
+
+    if(NOT _gs_visited_index EQUAL -1)
+        set(${OUT_INCLUDES} "" PARENT_SCOPE)
+        set(${OUT_VISITED} "${VISITED}" PARENT_SCOPE)
+        return()
+    endif()
+
+    list(APPEND VISITED "${TARGET_NAME}")
+
+    set(_gs_local_includes "")
+
+    get_target_property(
+        _gs_source_dir
+        "${TARGET_NAME}"
+        SOURCE_DIR
+    )
+
+    foreach(_gs_property
+        INCLUDE_DIRECTORIES
+        INTERFACE_INCLUDE_DIRECTORIES
+    )
+
+        get_target_property(
+            _gs_dirs
+            "${TARGET_NAME}"
+            "${_gs_property}"
+        )
+
+        if(_gs_dirs)
+
+            foreach(_gs_dir IN LISTS _gs_dirs)
+
+                set(_gs_resolved_dir "")
+
+                if(_gs_dir MATCHES
+                   "^\\$<BUILD_INTERFACE:([^>]*)>$")
+
+                    set(_gs_resolved_dir "${CMAKE_MATCH_1}")
+
+                elseif(NOT _gs_dir MATCHES "\\$<")
+
+                    set(_gs_resolved_dir "${_gs_dir}")
+
+                endif()
+
+                if(_gs_resolved_dir)
+
+                    if(NOT IS_ABSOLUTE "${_gs_resolved_dir}")
+
+                        get_filename_component(
+                            _gs_resolved_dir
+                            "${_gs_resolved_dir}"
+                            ABSOLUTE
+                            BASE_DIR "${_gs_source_dir}"
+                        )
+
+                    endif()
+
+                    list(APPEND _gs_local_includes
+                        "${_gs_resolved_dir}"
+                    )
+
+                endif()
+
+            endforeach()
+
+        endif()
+
+    endforeach()
+
+    # AUTOGEN текущей цели.
+
+    _gs_get_target_autogen_include(
+        "${TARGET_NAME}"
+        _gs_autogen_include
+    )
+
+    if(_gs_autogen_include)
+        list(APPEND _gs_local_includes
+            "${_gs_autogen_include}"
+        )
+    endif()
+
+    # Рекурсивный обход зависимостей.
+
+    foreach(_gs_property
+        LINK_LIBRARIES
+        INTERFACE_LINK_LIBRARIES
+    )
+
+        get_target_property(
+            _gs_libraries
+            "${TARGET_NAME}"
+            "${_gs_property}"
+        )
+
+        if(NOT _gs_libraries)
+            continue()
+        endif()
+
+        foreach(_gs_library IN LISTS _gs_libraries)
+
+            if(_gs_library MATCHES "\\$<")
+                continue()
+            endif()
+
+            if(_gs_library STREQUAL "debug"
+               OR _gs_library STREQUAL "optimized"
+               OR _gs_library STREQUAL "general")
+                continue()
+            endif()
+
+            if(NOT TARGET "${_gs_library}")
+                continue()
+            endif()
+
+            _gs_collect_includes(
+                "${_gs_library}"
+                _gs_dependency_includes
+                _gs_dependency_visited
+                "${VISITED}"
+            )
+
+            list(APPEND _gs_local_includes
+                ${_gs_dependency_includes}
+            )
+
+            set(VISITED "${_gs_dependency_visited}")
+
+        endforeach()
+
+    endforeach()
+
+    list(REMOVE_DUPLICATES _gs_local_includes)
+
+    set(${OUT_INCLUDES}
+        "${_gs_local_includes}"
+        PARENT_SCOPE
+    )
+
+    set(${OUT_VISITED}
+        "${VISITED}"
+        PARENT_SCOPE
+    )
+
+endfunction()
+
+# =============================================================================
+# 7. СБОР AUTOGEN ИЗ ТЕКУЩЕГО КАТАЛОГА И ПОДКАТАЛОГОВ
+# =============================================================================
+
+function(_gs_collect_directory_autogen DIRECTORY OUT_VAR)
+
+    set(_gs_result "")
+
+    get_property(
+        _gs_directory_targets
+        DIRECTORY "${DIRECTORY}"
+        PROPERTY BUILDSYSTEM_TARGETS
+    )
+
+    foreach(_gs_target IN LISTS _gs_directory_targets)
+
+        _gs_get_target_autogen_include(
+            "${_gs_target}"
+            _gs_autogen_include
+        )
+
+        if(_gs_autogen_include)
+            list(APPEND _gs_result
+                "${_gs_autogen_include}"
+            )
+        endif()
+
+    endforeach()
+
+    get_property(
+        _gs_subdirectories
+        DIRECTORY "${DIRECTORY}"
+        PROPERTY SUBDIRECTORIES
+    )
+
+    foreach(_gs_subdirectory IN LISTS _gs_subdirectories)
+
+        _gs_collect_directory_autogen(
+            "${_gs_subdirectory}"
+            _gs_sub_autogen
+        )
+
+        list(APPEND _gs_result ${_gs_sub_autogen})
+
+    endforeach()
+
+    list(REMOVE_DUPLICATES _gs_result)
+
+    set(${OUT_VAR} "${_gs_result}" PARENT_SCOPE)
+
+endfunction()
+
+# =============================================================================
+# 8. ФОРМИРОВАНИЕ -I АРГУМЕНТОВ ДЛЯ QDOC
+# =============================================================================
+
+function(_gs_build_include_path_args
+    MODULE_NAME
+    QT_HEADERS
+    MINGW_PATHS
+    OUT_ARGS
+)
+
+    set(_gs_args "")
+    set(_gs_regular_includes "")
+    set(_gs_autogen_includes "")
+
+    # -------------------------------------------------------------------------
+    # MinGW / GCC.
+    # -------------------------------------------------------------------------
+
+    foreach(_gs_path IN LISTS MINGW_PATHS)
+
+        if(_gs_path AND IS_DIRECTORY "${_gs_path}")
+            list(APPEND _gs_regular_includes "${_gs_path}")
+        endif()
+
+    endforeach()
+
+    # -------------------------------------------------------------------------
+    # Qt.
+    # -------------------------------------------------------------------------
+
+    if(IS_DIRECTORY "${QT_HEADERS}")
+        list(APPEND _gs_regular_includes "${QT_HEADERS}")
+    endif()
+
+    foreach(_gs_qt_module IN LISTS GEOSCHEME_QDOC_QT_MODULES)
+
+        if(IS_DIRECTORY "${QT_HEADERS}/${_gs_qt_module}")
+
+            list(APPEND _gs_regular_includes
+                "${QT_HEADERS}/${_gs_qt_module}"
+            )
+
+        endif()
+
+    endforeach()
+
+    # -------------------------------------------------------------------------
+    # Основная цель и её зависимости.
+    # -------------------------------------------------------------------------
+
+    if(TARGET "${MODULE_NAME}")
+
+        _gs_collect_includes(
+            "${MODULE_NAME}"
+            _gs_target_includes
+            _gs_visited_targets
+            ""
+        )
+
+        list(APPEND _gs_regular_includes
+            ${_gs_target_includes}
+        )
+
+    else()
+
+        message(WARNING
+            "[Docs] ${MODULE_NAME}: target not found; "
+            "target include paths were not collected."
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # AUTOGEN всех целей в каталоге модуля и его подкаталогах.
+    # -------------------------------------------------------------------------
+
+    _gs_collect_directory_autogen(
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        _gs_directory_autogen
+    )
+
+    list(APPEND _gs_autogen_includes
+        ${_gs_directory_autogen}
+    )
+
+    list(REMOVE_DUPLICATES _gs_regular_includes)
+    list(REMOVE_DUPLICATES _gs_autogen_includes)
+
+    # -------------------------------------------------------------------------
+    # Обычные include-пути.
+    # -------------------------------------------------------------------------
+
+    foreach(_gs_path IN LISTS _gs_regular_includes)
+
+        if(IS_DIRECTORY "${_gs_path}")
+            list(APPEND _gs_args "-I${_gs_path}")
+        endif()
+
+    endforeach()
+
+    # -------------------------------------------------------------------------
+    # AUTOGEN.
+    #
+    # Каталог может ещё не существовать на этапе конфигурации.
+    # QDoc запускается после сборки модуля.
+    # -------------------------------------------------------------------------
+
+    foreach(_gs_path IN LISTS _gs_autogen_includes)
+
+        if(_gs_path)
+            list(APPEND _gs_args "-I${_gs_path}")
+        endif()
+
+    endforeach()
+
+    list(REMOVE_DUPLICATES _gs_args)
+
+    list(LENGTH _gs_regular_includes _gs_regular_count)
+    list(LENGTH _gs_autogen_includes _gs_autogen_count)
+
+    message(STATUS
+        "[Docs] ${MODULE_NAME}: "
+        "${_gs_regular_count} regular include paths, "
+        "${_gs_autogen_count} AUTOGEN paths"
+    )
+
+    set(${OUT_ARGS} "${_gs_args}" PARENT_SCOPE)
+
+endfunction()
+
+# =============================================================================
+# 9. ЛОГ АРГУМЕНТОВ QDOC
+# =============================================================================
+
+function(_gs_write_qdoc_args_log LOG_NAME DESCRIPTION ARGS)
+
+    get_filename_component(
+        _gs_log_dir
+        "${GEOSCHEME_QDOC_HTML_DIR}/../logs"
+        ABSOLUTE
+    )
+
+    file(MAKE_DIRECTORY "${_gs_log_dir}")
+
+    string(
+        REPLACE ";"
+        "\n"
+        _gs_pretty_args
+        "${ARGS}"
+    )
+
+    file(WRITE
+        "${_gs_log_dir}/${LOG_NAME}"
+        "# ${DESCRIPTION}\n"
+        "# Generated by GeoSchemeDocs.cmake.\n\n"
+        "${_gs_pretty_args}\n"
+    )
+
+    message(STATUS
+        "[Docs] QDoc arguments log = ${_gs_log_dir}/${LOG_NAME}"
+    )
+
+endfunction()
+
+# =============================================================================
+# 10. ИНИЦИАЛИЗАЦИЯ QDOC
+# =============================================================================
+
+macro(_gs_initialize_qdoc)
+
+    _gs_compute_qt_env()
+    _gs_find_qdoc()
+    _gs_compute_safe_path()
+
+endmacro()
+
+# =============================================================================
+# 11. ДОКУМЕНТАЦИЯ ОТДЕЛЬНОГО МОДУЛЯ
+# =============================================================================
+
+function(gs_add_doc_target MODULE_NAME QDOCCONF_FILENAME)
+
+    # -------------------------------------------------------------------------
+    # Если документация отключена, ничего не создаём.
+    # -------------------------------------------------------------------------
+
+    if(NOT GEOSCHEME_BUILD_DOCS)
+        return()
+    endif()
+
+    if("${MODULE_NAME}" STREQUAL ""
+       OR "${QDOCCONF_FILENAME}" STREQUAL "")
+
+        message(FATAL_ERROR
+            "[Docs] gs_add_doc_target requires MODULE_NAME and QDOCCONF_FILENAME."
+        )
+
+    endif()
+
+    if(TARGET "docs_${MODULE_NAME}")
+
+        message(FATAL_ERROR
+            "[Docs] Target docs_${MODULE_NAME} already exists."
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Инициализация окружения.
+    # -------------------------------------------------------------------------
+
+    _gs_initialize_qdoc()
+
+    get_filename_component(
+        _gs_html_root
+        "${GEOSCHEME_QDOC_HTML_DIR}"
+        ABSOLUTE
+        BASE_DIR "${CMAKE_SOURCE_DIR}"
+    )
+
+    if(IS_ABSOLUTE "${QDOCCONF_FILENAME}")
+
+        set(_gs_mod_conf "${QDOCCONF_FILENAME}")
+
+    else()
+
+        get_filename_component(
+            _gs_mod_conf
+            "${QDOCCONF_FILENAME}"
+            ABSOLUTE
+            BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+
+    endif()
+
+    if(NOT EXISTS "${_gs_mod_conf}")
+
+        message(FATAL_ERROR
+            "[Docs] ${MODULE_NAME}: QDoc config not found: ${_gs_mod_conf}"
+        )
+
+    endif()
+
+    set(_gs_out_dir
+        "${_gs_html_root}/${MODULE_NAME}"
+    )
+
+    set(_gs_stamp
+        "${_gs_out_dir}/.cmake_docs_stamp"
+    )
+
+    message(STATUS
+        "[Docs] ${MODULE_NAME}: output = ${_gs_out_dir}"
+    )
+
+    message(STATUS
+        "[Docs] ${MODULE_NAME}: config = ${_gs_mod_conf}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Динамическое получение AUTOGEN-путей.
+    #
+    # Имена переменных сохраняются для совместимости с qdocconf.
+    # -------------------------------------------------------------------------
+
+    _gs_get_target_autogen_include(
+        GeoProImportDao
+        _gs_geoproimport_autogen_include
+    )
+
+    _gs_get_target_autogen_include(
+        GeoSchemeImpExp
+        _gs_geoschemeimpexp_autogen_include
+    )
+
+    foreach(_gs_autogen_include
+        "${_gs_geoproimport_autogen_include}"
+        "${_gs_geoschemeimpexp_autogen_include}"
+    )
+
+        if(_gs_autogen_include)
+
+            message(STATUS
+                "[Docs] ${MODULE_NAME}: AUTOGEN = ${_gs_autogen_include}"
+            )
+
+        endif()
+
+    endforeach()
+
+    if(NOT _gs_geoproimport_autogen_include)
+
+        message(STATUS
+            "[Docs] ${MODULE_NAME}: "
+            "GeoProImportDao AUTOGEN target not available at configure time."
+        )
+
+    endif()
+
+    if(NOT _gs_geoschemeimpexp_autogen_include)
+
+        message(STATUS
+            "[Docs] ${MODULE_NAME}: "
+            "GeoSchemeImpExp AUTOGEN target not available at configure time."
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # MinGW include-пути.
+    # -------------------------------------------------------------------------
+
+    set(_gs_mingw_paths
+        "${_gs_mingw_cxx}"
+        "${_gs_mingw_cxx_arch}"
+        "${_gs_mingw_cxx_back}"
+        "${_gs_mingw_inc}"
+        "${_gs_mingw_sys}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Автоматический сбор include-путей.
+    # -------------------------------------------------------------------------
+
+    _gs_build_include_path_args(
+        "${MODULE_NAME}"
+        "${_gs_qt_headers}"
+        "${_gs_mingw_paths}"
+        _gs_include_path_args
+    )
+
+    _gs_write_qdoc_args_log(
+        "${MODULE_NAME}_qdoc_args.txt"
+        "QDoc include arguments for ${MODULE_NAME}"
+        "${_gs_include_path_args}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Переменные окружения QDoc.
+    #
+    # GEOPROIMPORT_AUTOGEN_INCLUDE и
+    # GEOSCHEMEIMPEXP_AUTOGEN_INCLUDE
+    # оставлены для совместимости с существующими qdocconf.
+    # -------------------------------------------------------------------------
+
+    set(_gs_qdoc_env
+
+        "QT_INSTALL_DOCS=${_gs_qt_docs}"
+        "QT_INSTALL_HEADERS=${_gs_qt_headers}"
+
+        "GEOPROIMPORT_AUTOGEN_INCLUDE=${_gs_geoproimport_autogen_include}"
+        "GEOSCHEMEIMPEXP_AUTOGEN_INCLUDE=${_gs_geoschemeimpexp_autogen_include}"
+
+        "QT_INSTALL_PREFIX=${_gs_qt_prefix}"
+        "QT_VERSION=${_gs_qt_version}"
+        "QT_VER=${_gs_qt_version}"
+
+        "MINGW_CXX=${_gs_mingw_cxx}"
+        "MINGW_CXX_ARCH=${_gs_mingw_cxx_arch}"
+        "MINGW_CXX_BACK=${_gs_mingw_cxx_back}"
+        "MINGW_INC=${_gs_mingw_inc}"
+        "MINGW_SYS=${_gs_mingw_sys}"
+
+        "INCLUDE="
+        "CPLUS_INCLUDE_PATH="
+        "C_INCLUDE_PATH="
+
+        "PATH=${_gs_safe_path}"
+        "QDOC_DISABLE_CLANG=1"
+
+    )
+
+    # -------------------------------------------------------------------------
+    # Команда генерации документации.
+    #
+    # 1. Создаётся каталог.
+    # 2. Запускается QDoc.
+    # 3. При успешном выполнении создаётся штамп.
+    #
+    # Проверка существования HTML-каталога как кэша отсутствует.
+    # -------------------------------------------------------------------------
+
+    add_custom_command(
+
+        OUTPUT "${_gs_stamp}"
+
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${_gs_out_dir}"
+
+        COMMAND "${CMAKE_COMMAND}" -E env
+                ${_gs_qdoc_env}
+                "${QDOC_EXECUTABLE}"
+                --no-link-errors
+                ${_gs_include_path_args}
+                "${_gs_mod_conf}"
+
+        COMMAND "${CMAKE_COMMAND}" -E touch
+                "${_gs_stamp}"
+
+        DEPENDS
+            "${_gs_mod_conf}"
+            "${QDOC_EXECUTABLE}"
+
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+
+        COMMENT "[Docs] QDoc: ${MODULE_NAME}"
+
+        VERBATIM
+
+    )
+
+    # -------------------------------------------------------------------------
+    # Основная цель документации.
+    #
+    # ALL включает документацию в стандартную сборку проекта.
+    # -------------------------------------------------------------------------
+
+    add_custom_target(
+        "docs_${MODULE_NAME}"
+        ALL
+        DEPENDS "${_gs_stamp}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Сохраняем исходное направление зависимости:
+    #
+    # Сначала собирается модуль.
+    # Затем генерируется его документация.
+    # -------------------------------------------------------------------------
+
+    if(TARGET "${MODULE_NAME}")
+
+        add_dependencies(
+            "docs_${MODULE_NAME}"
+            "${MODULE_NAME}"
+        )
+
+        message(STATUS
+            "[Docs] ${MODULE_NAME}: docs depends on ${MODULE_NAME}"
+        )
+
+    else()
+
+        message(WARNING
+            "[Docs] ${MODULE_NAME}: module target was not found."
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Принудительная пересборка документации одного модуля.
+    # -------------------------------------------------------------------------
+
+    add_custom_target(
+        "docs_${MODULE_NAME}_rebuild"
+
+        COMMAND "${CMAKE_COMMAND}" -E remove_directory
+                "${_gs_out_dir}"
+
+        COMMAND "${CMAKE_COMMAND}" --build
+                "${CMAKE_BINARY_DIR}"
+                --config "$<CONFIG>"
+                --target "docs_${MODULE_NAME}"
+
+        COMMENT "[Docs] Force rebuild docs: ${MODULE_NAME}"
+
+        VERBATIM
+    )
+
+    # -------------------------------------------------------------------------
+    # Регистрация целей и штампов.
+    # -------------------------------------------------------------------------
+
+    set_property(
+        GLOBAL APPEND PROPERTY
+        GS_DOC_MODULE_TARGETS
+        "docs_${MODULE_NAME}"
+    )
+
+    set_property(
+        GLOBAL APPEND PROPERTY
+        GS_DOC_MODULE_STAMPS
+        "${_gs_stamp}"
+    )
+
+    set_property(
+        GLOBAL APPEND PROPERTY
+        GS_DOC_MODULE_NAMES
+        "${MODULE_NAME}"
+    )
+
+endfunction()
+
+# =============================================================================
+# 12. ОБЩИЙ ИНДЕКС ДОКУМЕНТАЦИИ
+# =============================================================================
+
+function(gs_finalize_doc_index)
+
+    if(NOT GEOSCHEME_BUILD_DOCS)
+        return()
+    endif()
+
+    if(TARGET docs_GeoScheme_index)
+
+        message(FATAL_ERROR
+            "[Docs] gs_finalize_doc_index() has already been called."
+        )
+
+    endif()
+
+    _gs_initialize_qdoc()
+
+    get_filename_component(
+        _gs_html_root
+        "${GEOSCHEME_QDOC_HTML_DIR}"
+        ABSOLUTE
+        BASE_DIR "${CMAKE_SOURCE_DIR}"
+    )
+
+    get_filename_component(
+        _gs_main_conf
+        "${GEOSCHEME_QDOC_INDEX_CONFIG}"
+        ABSOLUTE
+        BASE_DIR "${CMAKE_SOURCE_DIR}"
+    )
+
+    if(NOT EXISTS "${_gs_main_conf}")
+
+        message(FATAL_ERROR
+            "[Docs] Main QDoc config not found: ${_gs_main_conf}"
+        )
+
+    endif()
+
+    get_filename_component(
+        _gs_main_conf_dir
+        "${_gs_main_conf}"
+        DIRECTORY
+    )
+
+    set(_gs_out_dir
+        "${_gs_html_root}/GeoScheme"
+    )
+
+    set(_gs_stamp
+        "${_gs_out_dir}/.cmake_docs_stamp"
+    )
+
+    get_property(
+        _gs_module_targets
+        GLOBAL PROPERTY GS_DOC_MODULE_TARGETS
+    )
+
+    get_property(
+        _gs_module_stamps
+        GLOBAL PROPERTY GS_DOC_MODULE_STAMPS
+    )
+
+    message(STATUS
+        "[Docs] GeoScheme index: modules = ${_gs_module_targets}"
+    )
+
+    message(STATUS
+        "[Docs] GeoScheme index: output = ${_gs_out_dir}"
+    )
+
+    message(STATUS
+        "[Docs] GeoScheme index: config = ${_gs_main_conf}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Базовые include-пути для общего индекса.
+    # -------------------------------------------------------------------------
+
+    set(_gs_mingw_paths
+        "${_gs_mingw_cxx}"
+        "${_gs_mingw_cxx_arch}"
+        "${_gs_mingw_cxx_back}"
+        "${_gs_mingw_inc}"
+        "${_gs_mingw_sys}"
+    )
+
+    set(_gs_index_include_args "")
+
+    foreach(_gs_path IN LISTS _gs_mingw_paths)
+
+        if(_gs_path AND IS_DIRECTORY "${_gs_path}")
+            list(APPEND _gs_index_include_args "-I${_gs_path}")
+        endif()
+
+    endforeach()
+
+    if(IS_DIRECTORY "${_gs_qt_headers}")
+        list(APPEND _gs_index_include_args "-I${_gs_qt_headers}")
+    endif()
+
+    foreach(_gs_qt_module IN LISTS GEOSCHEME_QDOC_QT_MODULES)
+
+        if(IS_DIRECTORY "${_gs_qt_headers}/${_gs_qt_module}")
+
+            list(APPEND _gs_index_include_args
+                "-I${_gs_qt_headers}/${_gs_qt_module}"
+            )
+
+        endif()
+
+    endforeach()
+
+    list(REMOVE_DUPLICATES _gs_index_include_args)
+
+    _gs_write_qdoc_args_log(
+        "GeoScheme_index_qdoc_args.txt"
+        "QDoc include arguments for GeoScheme index"
+        "${_gs_index_include_args}"
+    )
+
+    # -------------------------------------------------------------------------
+    # AUTOGEN-пути для совместимости с qdocconf.
+    # -------------------------------------------------------------------------
+
+    _gs_get_target_autogen_include(
+        GeoProImportDao
+        _gs_geoproimport_autogen_include
+    )
+
+    _gs_get_target_autogen_include(
+        GeoSchemeImpExp
+        _gs_geoschemeimpexp_autogen_include
+    )
+
+    set(_gs_index_qdoc_env
+
+        "QT_INSTALL_DOCS=${_gs_qt_docs}"
+        "QT_INSTALL_HEADERS=${_gs_qt_headers}"
+
+        "GEOPROIMPORT_AUTOGEN_INCLUDE=${_gs_geoproimport_autogen_include}"
+        "GEOSCHEMEIMPEXP_AUTOGEN_INCLUDE=${_gs_geoschemeimpexp_autogen_include}"
+
+        "QT_INSTALL_PREFIX=${_gs_qt_prefix}"
+        "QT_VERSION=${_gs_qt_version}"
+        "QT_VER=${_gs_qt_version}"
+
+        "MINGW_CXX=${_gs_mingw_cxx}"
+        "MINGW_CXX_ARCH=${_gs_mingw_cxx_arch}"
+        "MINGW_CXX_BACK=${_gs_mingw_cxx_back}"
+        "MINGW_INC=${_gs_mingw_inc}"
+        "MINGW_SYS=${_gs_mingw_sys}"
+
+        "INCLUDE="
+        "CPLUS_INCLUDE_PATH="
+        "C_INCLUDE_PATH="
+
+        "PATH=${_gs_safe_path}"
+        "QDOC_DISABLE_CLANG=1"
+
+    )
+
+    # -------------------------------------------------------------------------
+    # Генерация общего индекса.
+    # -------------------------------------------------------------------------
+
+    add_custom_command(
+
+        OUTPUT "${_gs_stamp}"
+
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${_gs_out_dir}"
+
+        COMMAND "${CMAKE_COMMAND}" -E env
+                ${_gs_index_qdoc_env}
+                "${QDOC_EXECUTABLE}"
+                --no-link-errors
+                ${_gs_index_include_args}
+                "${_gs_main_conf}"
+
+        COMMAND "${CMAKE_COMMAND}" -E touch
+                "${_gs_stamp}"
+
+        DEPENDS
+            "${_gs_main_conf}"
+            "${QDOC_EXECUTABLE}"
+            ${_gs_module_stamps}
+
+        WORKING_DIRECTORY "${_gs_main_conf_dir}"
+
+        COMMENT "[Docs] QDoc: GeoScheme index"
+
+        VERBATIM
+
+    )
+
+    # -------------------------------------------------------------------------
+    # Цель общего индекса.
+    # -------------------------------------------------------------------------
+
+    add_custom_target(
+        docs_GeoScheme_index
+        DEPENDS "${_gs_stamp}"
+    )
+
+    if(_gs_module_targets)
+
+        add_dependencies(
+            docs_GeoScheme_index
+            ${_gs_module_targets}
+        )
+
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Полная пересборка документации.
+    #
+    # Удаление всего HTML-каталога удаляет и все штампы модулей.
+    # При следующем запуске документация будет создана заново.
+    # -------------------------------------------------------------------------
+
+    add_custom_target(
+        docs_rebuild_all
+
+        COMMAND "${CMAKE_COMMAND}" -E remove_directory
+                "${_gs_html_root}"
+
+        COMMAND "${CMAKE_COMMAND}" --build
+                "${CMAKE_BINARY_DIR}"
+                --config "$<CONFIG>"
+                --target docs_GeoScheme_index
+
+        COMMENT "[Docs] Full documentation rebuild from scratch"
+
+        VERBATIM
+    )
+
+endfunction()
+
+# =============================================================================
+# END OF GeoSchemeDocs.cmake
+# =============================================================================
+Важные моменты перед сборкой
+1. В корневом CMakeLists.txt подключай файл без условия:
+include(GeoSchemeDocs.cmake)
+	•	gs_finalize_doc_index() вызывай после всех add_subdirectory().
+	•	Вызовы gs_add_doc_target() оставляй в CMakeLists соответствующих модулей.
+	•	Обрати внимание на AUTOGEN: динамическое получение путей работает, если соответствующие CMake-цели уже объявлены к моменту вызова gs_add_doc_target(). Если какая-то цель ещё не создана, в сообщении конфигурации будет предупреждение. Тогда нужно будет отдельно решить вопрос порядка объявления целей.
+Я подготовил файл по твоей текущей версии и описанным требованиям, но не запускал его в твоём проекте. Поэтому перед рабочей сборкой нужно проверить конфигурацию CMake и генерацию документации на твоём генераторе MinGW Makefiles.
