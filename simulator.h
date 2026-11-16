@@ -5,6 +5,7 @@
 #include <QtGlobal>
 #include <Eigen/Cholesky>
 #include <Eigen/Core>
+#include <Eigen/QR>
 #include <pocketfft_hdronly.h>
 
 #include <algorithm>
@@ -43,16 +44,29 @@ struct Point {
     qreal x = 0;
     qreal y = 0;
     qreal value = 0;
-    // Exact target = value * weight. Zero weight means target zero.
+    // Exact target is always value. Relative weight controls the mean trend only.
+    // Nonnegative; zero excludes the point from the trend, not from hard constraints.
     qreal weight = 1;
 };
 
+enum class VariogramType {
+    Matern32,
+    Exponential,
+    Gaussian,
+    Spherical
+};
+
 struct CovarianceParameters {
+    VariogramType variogram = VariogramType::Matern32;
+    // Total prior standard deviation, including the nugget component.
     double standardDeviation = 1.0;
-    // Matern 3/2 correlation: (1 + sqrt(3)*r)*exp(-sqrt(3)*r).
-    // These are length scales, NOT distances where correlation becomes zero.
-    double majorLength = 1.0;
-    double minorLength = 1.0;
+    // Independent nodal variance, in elevation units squared; [0, deviation^2].
+    // Controls remain exact: this is not observation-error variance.
+    double nugget = 0.0;
+    // Major-axis radius: 95% of the structured sill, or the exact cutoff for Spherical.
+    double range = 1.0;
+    // Minor-axis radius / major-axis radius, in (0, 1]. One means isotropy.
+    double anisotropyRatio = 1.0;
     // Counterclockwise from +X, in degrees.
     double azimuthDegrees = 0.0;
 };
@@ -109,6 +123,7 @@ struct Observation {
     std::array<std::size_t, 4> nodes{};
     std::array<double, 4> weights{};
     double target = 0.0;
+    double relativeWeight = 1.0; // Normalized by the mean after merging duplicates.
 
     double evaluate(const std::vector<double>& values) const;
 };
@@ -173,21 +188,23 @@ inline std::vector<Observation> makeObservations(const GridGeometry& grid,
                                          std::size_t maxPoints) {
     std::vector<Observation> observations;
     // Merge equal coordinates before factorization; never soften hard data.
-    std::map<std::pair<double, double>, double> targets;
+    std::map<std::pair<double, double>, std::size_t> locations;
     for (std::size_t p = 0; p < points.size(); ++p) {
         const auto& point = points[p];
-        const double target = double(point.value) * double(point.weight);
-        if (!std::isfinite(double(point.value)) ||
-            !std::isfinite(double(point.weight)) || !std::isfinite(target)) {
-            throw std::invalid_argument("Non-finite value * weight at point " + std::to_string(p));
+        const double target = double(point.value);
+        const double weight = double(point.weight);
+        if (!std::isfinite(target) || !std::isfinite(weight) || weight < 0.0) {
+            throw std::invalid_argument("Point needs a finite value and finite nonnegative weight at index " + std::to_string(p));
         }
         const auto x = locate(double(point.x), grid.minx, grid.maxx, grid.dx, grid.nx);
         const auto y = locate(double(point.y), grid.miny, grid.maxy, grid.dy, grid.ny);
-        const auto inserted = targets.emplace(std::make_pair(double(point.x), double(point.y)), target);
+        const auto inserted = locations.emplace(std::make_pair(double(point.x), double(point.y)), observations.size());
         if (!inserted.second) {
-            if (inserted.first->second != target) {
+            auto& existing = observations[inserted.first->second];
+            if (existing.target != target) {
                 throw std::invalid_argument("Conflicting targets at duplicate point " + std::to_string(p));
             }
+            existing.relativeWeight = std::max(existing.relativeWeight, weight);
             continue;
         }
         if (observations.size() >= maxPoints) {
@@ -198,13 +215,31 @@ inline std::vector<Observation> makeObservations(const GridGeometry& grid,
             {lowerLeft, lowerLeft + 1, lowerLeft + grid.nx, lowerLeft + grid.nx + 1},
             {(1 - x.fraction) * (1 - y.fraction), x.fraction * (1 - y.fraction),
              (1 - x.fraction) * y.fraction, x.fraction * y.fraction},
-            target
+            target, weight
         });
+    }
+    if (!observations.empty()) {
+        double largestWeight = 0.0;
+        for (const auto& point : observations) {
+            largestWeight = std::max(largestWeight, point.relativeWeight);
+        }
+        if (largestWeight == 0.0) {
+            throw std::invalid_argument("At least one control point must have positive weight");
+        }
+        // Scale first so that even large input weights cannot overflow the mean.
+        long double sum = 0.0L;
+        for (const auto& point : observations) {
+            sum += point.relativeWeight / largestWeight;
+        }
+        const double scaledMean = double(sum / observations.size());
+        for (auto& point : observations) {
+            point.relativeWeight = (point.relativeWeight / largestWeight) / scaledMean;
+        }
     }
     return observations;
 }
 // -----------------------------------------------------------------------------
-// 3. Covariance model, circulant embedding and FFT generator
+// 3. Variogram model, circulant embedding and FFT generator
 // -----------------------------------------------------------------------------
 
 // PocketFFT defines this macro for its default or caller-selected namespace.
@@ -237,15 +272,34 @@ private:
 };
 
 inline constexpr double pi = 3.14159265358979323846;
-inline constexpr double sqrtThree = 1.73205080756887729353;
+inline constexpr double logTwenty = 2.99573227355399099344;
+// Positive root of (1 + a) * exp(-a) = 0.05.
+inline constexpr double matern95 = 4.743864518390578;
 inline constexpr double spectralTolerance = 1e-12;
 
 inline void validateCovariance(const CovarianceParameters& p) {
     if (!std::isfinite(p.standardDeviation) || p.standardDeviation <= 0 ||
-        !std::isfinite(p.majorLength) || p.majorLength <= 0 ||
-        !std::isfinite(p.minorLength) || p.minorLength <= 0 ||
+        !std::isfinite(p.range) || p.range <= 0 ||
+        !std::isfinite(p.anisotropyRatio) || p.anisotropyRatio <= 0 || p.anisotropyRatio > 1 ||
         !std::isfinite(p.azimuthDegrees)) {
-        throw std::invalid_argument("Covariance needs finite positive deviation and lengths, finite angle");
+        throw std::invalid_argument("Covariance needs positive deviation and range, anisotropyRatio in (0, 1], finite angle");
+    }
+    const double variance = p.standardDeviation * p.standardDeviation;
+    if (!std::isfinite(variance) || variance <= 0 ||
+        !std::isfinite(p.nugget) || p.nugget < 0 || p.nugget > variance) {
+        throw std::invalid_argument("Nugget must be in [0, standardDeviation^2], with finite positive total variance");
+    }
+    if (p.range * p.anisotropyRatio <= 0) {
+        throw std::invalid_argument("Minor-axis range underflows");
+    }
+    switch (p.variogram) {
+    case VariogramType::Matern32:
+    case VariogramType::Exponential:
+    case VariogramType::Gaussian:
+    case VariogramType::Spherical:
+        break;
+    default:
+        throw std::invalid_argument("Unknown variogram type");
     }
 }
 
@@ -266,12 +320,38 @@ inline double signedLag(std::size_t index, std::size_t size, double spacing) {
     return lag;
 }
 
-inline double maternCorrelation(double x, double y, const CovarianceParameters& p,
-                         double cosine, double sine) {
-    const double along = (cosine * x + sine * y) / p.majorLength;
-    const double across = (-sine * x + cosine * y) / p.minorLength;
-    const double r = sqrtThree * std::hypot(along, across);
-    return std::isfinite(r) ? (1.0 + r) * std::exp(-r) : 0.0;
+inline double structuredCorrelation(double r, VariogramType type) {
+    if (!std::isfinite(r)) {
+        return 0.0;
+    }
+    switch (type) {
+    case VariogramType::Matern32: {
+        const double t = matern95 * r;
+        return std::isfinite(t) ? (1.0 + t) * std::exp(-t) : 0.0;
+    }
+    case VariogramType::Exponential:
+        return std::exp(-logTwenty * r);
+    case VariogramType::Gaussian:
+        return std::exp(-logTwenty * r * r);
+    case VariogramType::Spherical:
+        // Equivalent to 1 - 1.5*r + 0.5*r^3, stable near the cutoff.
+        return r < 1.0 ? (1.0 - r) * (1.0 - r) * (1.0 + 0.5 * r) : 0.0;
+    default:
+        throw std::invalid_argument("Unknown variogram type");
+    }
+}
+
+inline double correlationAtLag(double x, double y, const CovarianceParameters& p,
+                               double cosine, double sine, double structuredFraction) {
+    if (x == 0.0 && y == 0.0) {
+        return 1.0; // Structured variance + independent nodal nugget.
+    }
+    if (structuredFraction == 0.0) {
+        return 0.0; // Pure nugget: independent values at distinct grid nodes.
+    }
+    const double along = (cosine * x + sine * y) / p.range;
+    const double across = (-sine * x + cosine * y) / (p.range * p.anisotropyRatio);
+    return structuredFraction * structuredCorrelation(std::hypot(along, across), p.variogram);
 }
 
 inline SpectralField::SpectralField(const GridGeometry& grid, const CovarianceParameters& p,
@@ -282,10 +362,12 @@ inline SpectralField::SpectralField(const GridGeometry& grid, const CovariancePa
     const double angle = std::remainder(p.azimuthDegrees, 360.0) * pi / 180.0;
     const double cosine = std::cos(angle);
     const double sine = std::sin(angle);
+    const double variance = p.standardDeviation * p.standardDeviation;
+    const double structuredFraction = (variance - p.nugget) / variance;
 
     for (;;) {
         if (nx_ > maxEmbeddingNodes / ny_) {
-            throw std::runtime_error("No valid FFT embedding within maxEmbeddingNodes; increase limit or shorten lengths");
+            throw std::runtime_error("No valid FFT embedding within maxEmbeddingNodes; increase limit or reduce range");
         }
         const std::size_t count = nx_ * ny_;
         if (count > std::size_t(std::numeric_limits<std::ptrdiff_t>::max()) / sizeof(std::complex<double>)) {
@@ -294,8 +376,9 @@ inline SpectralField::SpectralField(const GridGeometry& grid, const CovariancePa
         Buffer buffer(count);
         for (std::size_t y = 0; y < ny_; ++y) {
             for (std::size_t x = 0; x < nx_; ++x) {
-                buffer[y * nx_ + x] = maternCorrelation(
-                    signedLag(x, nx_, grid.dx), signedLag(y, ny_, grid.dy), p, cosine, sine);
+                buffer[y * nx_ + x] = correlationAtLag(
+                    signedLag(x, nx_, grid.dx), signedLag(y, ny_, grid.dy),
+                    p, cosine, sine, structuredFraction);
             }
         }
         transform(buffer, true);
@@ -331,12 +414,12 @@ inline SpectralField::SpectralField(const GridGeometry& grid, const CovariancePa
         for (double value : spectrum_) {
             spectrumSum += value;
         }
-        const double variance = double(spectrumSum / count);
-        if (!std::isfinite(variance) || variance <= 0.0) {
+        const double effectiveVariance = double(spectrumSum / count);
+        if (!std::isfinite(effectiveVariance) || effectiveVariance <= 0.0) {
             throw std::runtime_error("Invalid FFT covariance variance");
         }
         for (std::size_t i = 0; i < count; ++i) {
-            spectrum_[i] /= variance;
+            spectrum_[i] /= effectiveVariance;
             buffer[i] = spectrum_[i];
         }
         transform(buffer, false);
@@ -435,6 +518,76 @@ struct Simulator::Impl {
         prepareConditioning();
     }
 
+    Eigen::Vector3d trendBasis(std::size_t node) const {
+        return {1.0,
+                2.0 * double(node % base.nx) / double(base.nx - 1) - 1.0,
+                2.0 * double(node / base.nx) / double(base.ny - 1) - 1.0};
+    }
+
+    void applyWeightedTrend() {
+        std::size_t activeCount = 0;
+        double firstWeight = 0.0;
+        bool equalWeights = true;
+        for (const auto& point : observations) {
+            if (point.relativeWeight == 0.0) continue;
+            if (activeCount == 0) firstWeight = point.relativeWeight;
+            else if (point.relativeWeight != firstWeight) equalWeights = false;
+            ++activeCount;
+        }
+        if (equalWeights) return; // Includes a single active point; preserve the base exactly.
+
+        const auto count = static_cast<Eigen::Index>(activeCount);
+        Eigen::MatrixXd design(count, 3);
+        Eigen::VectorXd residuals(count), influence(count);
+        Eigen::Index row = 0;
+        for (const auto& point : observations) {
+            if (point.relativeWeight == 0.0) continue;
+            design.row(row).setZero();
+            for (std::size_t k = 0; k < 4; ++k) {
+                design.row(row) += point.weights[k] * trendBasis(point.nodes[k]).transpose();
+            }
+            residuals[row] = point.target - point.evaluate(mean);
+            influence[row] = point.relativeWeight;
+            ++row;
+        }
+        if (!residuals.allFinite()) {
+            throw std::invalid_argument("Control residual overflows during trend preparation");
+        }
+        const double residualScale = residuals.cwiseAbs().maxCoeff();
+        if (residualScale == 0.0) return;
+        residuals /= residualScale;
+
+        // WLS minimizes sum(q_i * error_i^2), hence sqrt(q_i) scales the rows.
+        Eigen::MatrixXd weightedDesign = design;
+        Eigen::VectorXd weightedResiduals = residuals;
+        for (Eigen::Index i = 0; i < count; ++i) {
+            const double scale = std::sqrt(influence[i]);
+            weightedDesign.row(i) *= scale;
+            weightedResiduals[i] *= scale;
+        }
+        Eigen::ColPivHouseholderQR<Eigen::MatrixXd> weightedFit(weightedDesign);
+        Eigen::ColPivHouseholderQR<Eigen::MatrixXd> equalFit(design);
+        weightedFit.setThreshold(1e-10);
+        equalFit.setThreshold(1e-10);
+        Eigen::Vector3d delta = Eigen::Vector3d::Zero();
+        if (weightedFit.rank() == 3 && equalFit.rank() == 3) {
+            delta = weightedFit.solve(weightedResiduals) - equalFit.solve(residuals);
+        } else {
+            // Both fits use the same constant basis when a plane cannot be resolved.
+            delta[0] = influence.dot(residuals) / influence.sum() - residuals.mean();
+        }
+        delta *= residualScale;
+        if (!delta.allFinite()) {
+            throw std::runtime_error("Weighted trend coefficients overflow");
+        }
+        for (std::size_t i = 0; i < mean.size(); ++i) {
+            mean[i] += trendBasis(i).dot(delta);
+            if (!std::isfinite(mean[i])) {
+                throw std::runtime_error("Weighted mean surface overflows");
+            }
+        }
+    }
+
     void prepareConditioning() {
         if (observations.size() > std::size_t(std::numeric_limits<Eigen::Index>::max())) {
             throw std::runtime_error("Too many observations for Eigen");
@@ -444,6 +597,7 @@ struct Simulator::Impl {
         if (count == 0) {
             return;
         }
+        applyWeightedTrend();
         Eigen::MatrixXd matrix(count, count);
         for (Eigen::Index i = 0; i < count; ++i) {
             const auto& a = observations[std::size_t(i)];
