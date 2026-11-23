@@ -1,0 +1,52 @@
+#include <gaussian_surface/simulator.h>
+#include <iostream>
+
+int main()
+{
+    using namespace gaussian_surface;
+
+    try {
+        // Базовая поверхность: 64 × 48 узлов, шаг 10.
+        Surface base;
+        base.nx = 64;
+        base.ny = 48;
+        base.minx = 0;
+        base.maxx = 630;
+        base.miny = 0;
+        base.maxy = 470;
+        base.grid.assign(base.nx * base.ny, qreal(8));
+
+        // Порядок полей: x, y, value, weight.
+        std::vector<Point> points{
+            {100, 120, 10, 0.5},
+            {500, 360, 14, 1.5}
+        };
+
+        CovarianceParameters covariance;
+        covariance.variogram = VariogramType::Exponential;
+        covariance.standardDeviation = 2.0;
+        covariance.nugget = 0.25;
+        covariance.range = 200.0;
+        covariance.anisotropyRatio = 0.5;
+        covariance.azimuthDegrees = 30.0;
+
+        // Подготовка выполняется один раз.
+        Simulator simulator(base, points, covariance);
+
+        // Две реализации с одинаковыми исходными условиями.
+        Surface first  = simulator.generate(42);
+        Surface second = simulator.generate(43);
+
+        // Чтение узла: ix = 10, iy = 12.
+        std::cout << first.grid[12 * first.nx + 10] << '\n';
+
+        PreparationInfo info = simulator.info();
+        std::cout << "FFT: "
+                  << info.embeddingNx << " x "
+                  << info.embeddingNy << '\n';
+    }
+    catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
